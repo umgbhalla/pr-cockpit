@@ -91,6 +91,9 @@ if [[ ! -f "$env_file" ]]; then
     if [[ "${COCKPIT_TAILSCALE_SERVE:-}" == "1" ]]; then
       printf 'COCKPIT_TAILSCALE_SERVE=1\n'
     fi
+    if [[ -n "${COCKPIT_TAILSCALE_SERVICE:-}" && "${COCKPIT_TAILSCALE_SERVICE}" != "0" ]]; then
+      printf 'COCKPIT_TAILSCALE_SERVICE=%s\n' "$(env_quote "$COCKPIT_TAILSCALE_SERVICE")"
+    fi
     printf 'COCKPIT_UPDATE_DISABLED=1\n'
   } > "$env_file"
   chmod 600 "$env_file"

@@ -81,7 +81,7 @@ import {
   replicaStatus,
   replicaViewerLogin,
 } from "./replica.ts";
-import { tailscaleServeStatus } from "./tailscaleServe.ts";
+import { isTrustedCliHost, tailscaleServeStatus, tailscaleServiceStatus } from "./tailscaleServe.ts";
 import type { GithubUsageSource } from "./githubUsage.ts";
 import type { GithubAuthStatus } from "./githubAuth.ts";
 import { commitsFromMirror, commitStatsFromMirror, conflictFilesFromMirror, diffFromMirror, fetchMirror, fileFromMirror, INCREMENTAL_FETCH_TIMEOUT_MS, materializePrWorktree, MirrorFetchError, summarizeCommitStats, type PullRequestCommit } from "./mirror.ts";
@@ -2507,12 +2507,14 @@ async function handleGithubAppCallback(url: URL): Promise<Response> {
 
 function handleHealthz(): Response {
   const serve = tailscaleServeStatus();
+  const service = tailscaleServiceStatus();
   return json({
     root: cockpitRoot,
     lastPollAt,
     prCount: countPrs(),
     replica: replicaEnabled() ? replicaStatus() : null,
     ...(serve.enabled ? { tailscaleServe: serve } : {}),
+    ...(service.enabled ? { tailscaleService: service } : {}),
   });
 }
 
@@ -3062,13 +3064,13 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
       parts[6] === "runs" &&
       parts[8] === "cache"
     ) {
-      const trustedCliHost = /^(?:127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(req.headers.get("host") ?? url.host);
+      const trustedCliHost = isTrustedCliHost(req, url.host);
       if (!trustedCliHost || req.headers.get("x-pr-cockpit-cli") !== "1") {
         return json({ error: "trusted CLI request required" }, 403);
       }
       return handleAgentCacheRun(parts[3]!, parts[4]!, parts[5]!, parts[7]!, runtime);
     }
-    const trustedCliHost = /^(?:127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(req.headers.get("host") ?? url.host);
+    const trustedCliHost = isTrustedCliHost(req, url.host);
     if (
       req.method === "POST" &&
       parts.length === 7 &&

@@ -115,7 +115,13 @@ The process always binds `127.0.0.1`. Never bind `0.0.0.0`, open TCP 4820 on a p
 
 Edit `~/.config/pr-cockpit/server.env`, then run `systemctl --user restart pr-cockpit.service`. To update the checkout and rebuild the UI without replacing that file, run `git pull && ./scripts/install-linux` again.
 
-To publish that loopback port onto your tailnet, opt in with `COCKPIT_TAILSCALE_SERVE=1` in `server.env` (or pass it on first install) and restart. Cockpit runs the equivalent of `tailscale serve --bg --https=443 http://127.0.0.1:$PORT` and adds the node's MagicDNS HTTPS origin (`https://<hostname>.<tailnet>.ts.net`) to the origin allowlist so the event socket and POSTs work. If `tailscale` is missing or Serve fails, the loopback server keeps running and logs the error. Other mesh frontends such as Twingate or Cloudflare Access still need each exact browser origin in `COCKPIT_ALLOWED_ORIGINS`.
+To publish that loopback port onto your tailnet, opt in with `COCKPIT_TAILSCALE_SERVE=1` in `server.env` (or pass it on first install) and restart. Cockpit runs the equivalent of `tailscale serve --bg --https=443 http://127.0.0.1:$PORT` and adds the node's MagicDNS HTTPS origin (`https://<hostname>.<tailnet>.ts.net`) to the origin allowlist so the event socket and POSTs work. If `tailscale` is missing or Serve fails, the loopback server keeps running and logs the error.
+
+For a name that stays put when the process moves hosts, also set `COCKPIT_TAILSCALE_SERVICE=pr-cockpit` (or `svc:pr-cockpit`). That runs `tailscale serve --service=svc:pr-cockpit --https=443 http://127.0.0.1:$PORT` and auto-allows `https://pr-cockpit.<tailnet>.ts.net`. Service hosts must be tagged (`tag:server`); a user-auth laptop cannot advertise a Service. If advertise fails for that reason, Cockpit logs it clearly and keeps loopback and classic Serve running. Never Funnel, never bind `0.0.0.0`.
+
+When Serve or a Service is publishing, a tailnet peer that arrives with Tailscale identity headers (`Tailscale-User-Login` plus `Tailscale-Headers-Info`) and an `Origin` matching `X-Forwarded-Host` (or this tailnet's MagicDNS suffix) is trusted without a pre-listed origin. Funnel requests are rejected. LocalAPI WhoIs is a best-effort extra path for tagged clients that do not get identity headers; a user-level process often cannot open `tailscaled`'s socket, and that failure is never treated as a successful identify. Other mesh frontends such as Twingate or Cloudflare Access still need each exact browser origin in `COCKPIT_ALLOWED_ORIGINS`.
+
+From another machine, `pr-cockpit` still defaults to `http://127.0.0.1:$PORT`. Set `COCKPIT_ORIGIN=https://pr-cockpit.<tailnet>.ts.net` to talk to the Service (or node Serve) origin, or leave origin unset with `COCKPIT_TAILSCALE_SERVICE` set so the CLI discovers `https://<name>.<suffix>` after loopback health fails. `update` and replica health stay on loopback. Do not use Electron's `COCKPIT_URL` for this.
 
 For SSH access, leave TCP port 4820 closed and tunnel it instead:
 
@@ -161,7 +167,9 @@ Settings live in the app. Optional shell overrides live in `~/.config/pr-cockpit
 | --- | --- |
 | `COCKPIT_REPOS` | Comma-separated `owner/repo` list |
 | `COCKPIT_PORT` | Local HTTP port; defaults to `4820` |
-| `COCKPIT_TAILSCALE_SERVE` | Set to `1` to publish loopback over Tailscale Serve and auto-allow the MagicDNS origin |
+| `COCKPIT_TAILSCALE_SERVE` | Set to `1` to publish loopback over Tailscale Serve and auto-allow the node MagicDNS origin |
+| `COCKPIT_TAILSCALE_SERVICE` | Service name such as `pr-cockpit`; advertises `svc:<name>` on a tagged host and auto-allows `https://<name>.<tailnet>.ts.net` |
+| `COCKPIT_ORIGIN` | CLI remote origin (`http://127.0.0.1[:port]` or `https://…`); ignored by the Electron shell |
 | `COCKPIT_PROXY` | Replica source: SSH host, or a Tailscale MagicDNS HTTPS origin |
 | `COCKPIT_DEFAULT_REPO` | Repository assumed when a PR number is passed alone |
 | `COCKPIT_REPO_ROOTS` | Paths containing local checkouts |

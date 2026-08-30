@@ -58,6 +58,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       COCKPIT_REPOS: "acme/app,acme/api",
       COCKPIT_ALLOWED_ORIGINS: "https://cockpit.example.ts.net,https://cockpit.example.com",
       COCKPIT_TAILSCALE_SERVE: "1",
+      COCKPIT_TAILSCALE_SERVICE: "pr-cockpit",
     };
     const first = await runInstaller(script, env);
     expect(first.exitCode).toBe(0);
@@ -73,6 +74,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       'COCKPIT_REPOS="acme/app,acme/api"\n' +
       'COCKPIT_ALLOWED_ORIGINS="https://cockpit.example.ts.net,https://cockpit.example.com"\n' +
       "COCKPIT_TAILSCALE_SERVE=1\n" +
+      'COCKPIT_TAILSCALE_SERVICE="pr-cockpit"\n' +
       "COCKPIT_UPDATE_DISABLED=1\n",
     );
 
@@ -99,6 +101,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       COCKPIT_REPOS: "replacement/ignored",
       COCKPIT_ALLOWED_ORIGINS: "https://replacement.invalid",
       COCKPIT_TAILSCALE_SERVE: "0",
+      COCKPIT_TAILSCALE_SERVICE: "other",
     });
     expect(second.exitCode).toBe(0);
     expect(readFileSync(envFile, "utf8")).toBe(preservedEnv);
