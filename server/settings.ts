@@ -114,10 +114,37 @@ export function normalizeDiffLayout(value: unknown): DiffLayout {
   return value === "unified" || value === "split" ? value : "split";
 }
 
+const SSH_REPLICA_HOST = /^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$/;
+const MAGIC_DNS_HOST = /^[A-Za-z0-9._-]+\.ts\.net$/i;
+
+function replicaHttpOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "";
+  }
+  if (url.username || url.password || url.search || url.hash) return "";
+  if (url.pathname !== "/" && url.pathname !== "") return "";
+  if (url.protocol === "https:") return url.origin;
+  if (url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")) {
+    return url.origin;
+  }
+  return "";
+}
+
+export function replicaSourceIsHttp(host: string): boolean {
+  return host.startsWith("https://") || host.startsWith("http://");
+}
+
 export function normalizeReplicaSshHost(value: unknown): string {
   if (typeof value !== "string") return "";
-  const host = value.trim().replace(/^ssh:\/\//, "").replace(/\/$/, "");
-  return /^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$/.test(host) ? host : "";
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (/^https?:\/\//i.test(trimmed)) return replicaHttpOrigin(trimmed);
+  const host = trimmed.replace(/^ssh:\/\//, "").replace(/\/$/, "");
+  if (MAGIC_DNS_HOST.test(host) && !host.includes("@")) return `https://${host.toLowerCase()}`;
+  return SSH_REPLICA_HOST.test(host) ? host : "";
 }
 
 export function seedSettings(): void {
@@ -300,7 +327,7 @@ export function writeSettings(
     ? undefined
     : normalizeReplicaSshHost(patch.replica_ssh_host);
   if (replicaSshHost === "" && (typeof patch.replica_ssh_host !== "string" || patch.replica_ssh_host.trim() !== "")) {
-    throw new Error("invalid replica SSH host");
+    throw new Error("invalid replica source");
   }
   if (patch.repos !== undefined) setSetting("repos", patch.repos);
   if (patch.default_repo !== undefined) setSetting("default_repo", patch.default_repo);

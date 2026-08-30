@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { startCockpitServer } from "./cockpitServer.ts";
+import { mergeRendererOrigins, startCockpitServer } from "./cockpitServer.ts";
 import {
   invalidateInbox,
   invalidatePr,
@@ -14,6 +14,33 @@ function openSocket(url: string): Promise<WebSocket> {
   socket.addEventListener("error", () => reject(new Error("renderer event socket failed")), { once: true });
   return promise;
 }
+
+test("renderer origin policy accepts a configured MagicDNS origin and rejects others", async () => {
+  const magicOrigin = "https://hyperion.tail2e89b4.ts.net";
+  const server = startCockpitServer(0, () => new Response("ok"), mergeRendererOrigins("https://cockpit.example.net", magicOrigin));
+  try {
+    expect(server.hostname).toBe("127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    expect((await fetch(`${baseUrl}/mutate`, {
+      method: "POST",
+      headers: { origin: magicOrigin },
+    })).ok).toBe(true);
+    expect((await fetch(`${baseUrl}/mutate`, {
+      method: "POST",
+      headers: { origin: "https://cockpit.example.net" },
+    })).ok).toBe(true);
+    expect((await fetch(`${baseUrl}/mutate`, {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    })).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/events`, {
+      headers: { origin: "https://random.ts.net" },
+    })).status).toBe(403);
+  } finally {
+    server.stop(true);
+    setRendererInvalidationPublisher(() => {});
+  }
+});
 
 test("renderer origins must be exact HTTP or HTTPS origins", () => {
   expect(() => startCockpitServer(0, () => new Response("Not found", { status: 404 }), "https://cockpit.example.net/path")).toThrow(

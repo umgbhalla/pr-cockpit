@@ -57,6 +57,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       USER: "cockpit-test",
       COCKPIT_REPOS: "acme/app,acme/api",
       COCKPIT_ALLOWED_ORIGINS: "https://cockpit.example.ts.net,https://cockpit.example.com",
+      COCKPIT_TAILSCALE_SERVE: "1",
     };
     const first = await runInstaller(script, env);
     expect(first.exitCode).toBe(0);
@@ -71,6 +72,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       "COCKPIT_PORT=4820\n" +
       'COCKPIT_REPOS="acme/app,acme/api"\n' +
       'COCKPIT_ALLOWED_ORIGINS="https://cockpit.example.ts.net,https://cockpit.example.com"\n' +
+      "COCKPIT_TAILSCALE_SERVE=1\n" +
       "COCKPIT_UPDATE_DISABLED=1\n",
     );
 
@@ -82,6 +84,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
     expect(unit).toContain(`ExecStart="${bin}/bun" "${resolvedRoot}/server/main.ts"`);
     expect(unit).toContain("Environment=\"COCKPIT_UPDATE_DISABLED=1\"");
     expect(unit).toContain("StandardOutput=journal\nStandardError=journal");
+    expect(unit).not.toContain("0.0.0.0");
 
     const bunLog = readFileSync(bunCalls, "utf8");
     expect(bunLog).toContain(`${resolvedRoot} | install`);
@@ -95,6 +98,7 @@ test("installs and safely refreshes a loopback systemd user service", async () =
       ...env,
       COCKPIT_REPOS: "replacement/ignored",
       COCKPIT_ALLOWED_ORIGINS: "https://replacement.invalid",
+      COCKPIT_TAILSCALE_SERVE: "0",
     });
     expect(second.exitCode).toBe(0);
     expect(readFileSync(envFile, "utf8")).toBe(preservedEnv);

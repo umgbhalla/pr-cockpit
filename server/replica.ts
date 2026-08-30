@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { readInboxReplica, replaceInboxReplica, type InboxReplica } from "./db.ts";
 import { setLastPollAt, lastPollAt } from "./poller.ts";
 import { invalidateInbox, publishPollCompleted } from "./rendererInvalidation.ts";
-import { readSettings } from "./settings.ts";
+import { readSettings, replicaSourceIsHttp } from "./settings.ts";
 
 const SOURCE_PORT = Number(Bun.env.COCKPIT_PROXY_PORT ?? 4820);
 const TUNNEL_PORT = Number(Bun.env.COCKPIT_REPLICA_LOCAL_PORT ?? 48203);
@@ -106,14 +106,21 @@ export function replicaStatus(): ReplicaState {
   return { ...state };
 }
 
+function replicaHttpOrigin(): string | null {
+  const host = replicaSshHost();
+  return replicaSourceIsHttp(host) ? host : null;
+}
+
 function sourceUrl(path: string): string {
+  const origin = replicaHttpOrigin();
+  if (origin) return `${origin}${path}`;
   return `http://127.0.0.1:${TUNNEL_PORT}${path}`;
 }
 
-async function waitForTunnel(process: Subprocess<"ignore", "ignore", "pipe">): Promise<void> {
+async function waitForSource(process?: Subprocess<"ignore", "ignore", "pipe">): Promise<void> {
   let failure: unknown = null;
   for (let attempt = 0; attempt < 50; attempt++) {
-    if (process.exitCode !== null) throw new Error(`SSH tunnel exited with code ${process.exitCode}`);
+    if (process && process.exitCode !== null) throw new Error(`SSH tunnel exited with code ${process.exitCode}`);
     try {
       const response = await fetch(sourceUrl("/healthz"), { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
@@ -123,13 +130,20 @@ async function waitForTunnel(process: Subprocess<"ignore", "ignore", "pipe">): P
     }
     await Bun.sleep(100);
   }
-  throw failure instanceof Error ? failure : new Error("SSH tunnel did not become ready");
+  throw failure instanceof Error ? failure : new Error(process ? "SSH tunnel did not become ready" : "replica source did not become ready");
+}
+
+async function ensureHttpSource(): Promise<void> {
+  const host = replicaSshHost();
+  if (!host) throw new Error("No replica source configured");
+  await waitForSource();
+  state = { ...state, host, connected: true, lastError: null };
 }
 
 async function ensureTunnel(): Promise<void> {
   if (tunnel?.exitCode === null) return;
   const host = replicaSshHost();
-  if (!host) throw new Error("No replica SSH host configured");
+  if (!host) throw new Error("No replica source configured");
   const process = Bun.spawn([
     "ssh",
     "-o", "BatchMode=yes",
@@ -147,15 +161,20 @@ async function ensureTunnel(): Promise<void> {
     state = { ...state, connected: false, lastError: error || `SSH tunnel exited with code ${code}` };
     tunnel = null;
   });
-  await waitForTunnel(process);
+  await waitForSource(process);
   state = { ...state, host, connected: true, lastError: null };
+}
+
+async function ensureSource(): Promise<void> {
+  if (replicaHttpOrigin()) return ensureHttpSource();
+  return ensureTunnel();
 }
 
 async function syncReplica(): Promise<void> {
   if (syncInFlight) return syncInFlight;
   syncInFlight = (async () => {
     try {
-      await ensureTunnel();
+      await ensureSource();
       const headers = new Headers();
       if (state.revision) headers.set("if-none-match", state.revision);
       const response = await fetch(sourceUrl("/api/replica/inbox"), {
@@ -254,7 +273,7 @@ export function isLocalReplicaRequest(request: Request, url: URL): boolean {
 export async function proxyReplicaRequest(request: Request, url: URL): Promise<Response | null> {
   if (!replicaEnabled() || !url.pathname.startsWith("/api/") || isLocalReplicaRequest(request, url)) return null;
   try {
-    await ensureTunnel();
+    await ensureSource();
     const headers = new Headers(request.headers);
     headers.delete("host");
     const upstream = await fetch(sourceUrl(`${url.pathname}${url.search}`), {
