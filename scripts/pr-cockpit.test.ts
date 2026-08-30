@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -863,6 +863,54 @@ test("CLI keeps loopback when it is healthy and COCKPIT_URL is set", async () =>
   }
 });
 
+test("CLI prefers healthy loopback over Service discovery", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-loopback-service-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  const tailscaleLog = join(home, "tailscale-log");
+  writeFileSync(join(bin, "tailscale"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(tailscaleLog)}
+exit 1
+`);
+  chmodSync(join(bin, "tailscale"), 0o755);
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/healthz") return Response.json({ ok: true });
+      return new Response("from-loopback\n");
+    },
+  });
+  try {
+    const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
+      env: {
+        ...Bun.env,
+        HOME: home,
+        PATH: `${bin}:${Bun.env.PATH}`,
+        COCKPIT_PORT: String(server.port),
+        COCKPIT_ORIGIN: "",
+        COCKPIT_TAILSCALE_SERVICE: "pr-cockpit",
+        COCKPIT_URL: "https://should-not-be-used.ts.net",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, error, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(error).toBe("");
+    expect(exitCode).toBe(0);
+    expect(output).toBe("from-loopback\n");
+    expect(existsSync(tailscaleLog) ? readFileSync(tailscaleLog, "utf8") : "").toBe("");
+  } finally {
+    server.stop(true);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("CLI rejects a non-loopback HTTP COCKPIT_ORIGIN", async () => {
   const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
     env: {
@@ -934,22 +982,6 @@ exit 1
     expect(calls).not.toContain("should-not-be-used");
     expect(calls).not.toContain("0.0.0.0");
     expect(calls).not.toContain("funnel");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    expect(await child.exited).toBe(0);
-    expect(readFileSync(argsFile, "utf8").trim().split("\n")).toEqual([
-      "https://hyperion.tail2e89b4.ts.net",
-      "4820",
-      "4892",
-    ]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

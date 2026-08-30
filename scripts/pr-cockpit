@@ -401,11 +401,11 @@ resolve_cockpit_api_origin() {
     echo "pr-cockpit: COCKPIT_ORIGIN must be http://127.0.0.1[:port] or an https origin" >&2
     return 2
   fi
-  if curl --noproxy '*' --max-time 2 -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-    printf 'http://127.0.0.1:%s\n' "$port"
-    return 0
-  fi
   if name="$(normalize_service_name "$service")"; then
+    if curl --noproxy '*' --max-time 2 -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
+      printf 'http://127.0.0.1:%s\n' "$port"
+      return 0
+    fi
     if origin="$(discover_tailscale_service_origin "$name")"; then
       printf '%s\n' "$origin"
       return 0
