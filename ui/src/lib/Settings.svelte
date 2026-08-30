@@ -636,9 +636,9 @@
 
       {#if activeTab === "advanced"}
         <label class="field">
-          <span class="label">Connect to primary Cockpit database over SSH</span>
-          <span class="hint">For example, if you have multiple machines and want to save API quota, PR Cockpit can act as a replica of another machine's database.</span>
-          <input class="input mono" bind:value={replicaSshHost} placeholder="user@host" spellcheck="false" autocomplete="off" />
+          <span class="label">Connect to primary Cockpit</span>
+          <span class="hint">SSH host such as user@host, or a Tailscale MagicDNS origin such as https://host.ts.net when that node publishes with Serve.</span>
+          <input class="input mono" bind:value={replicaSshHost} placeholder="user@host or https://host.ts.net" spellcheck="false" autocomplete="off" />
         </label>
       {/if}
 

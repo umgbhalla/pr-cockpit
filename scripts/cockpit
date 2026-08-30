@@ -35,6 +35,7 @@ env_relay_url="${COCKPIT_RELAY_URL:-}"
 env_review_bots="${COCKPIT_REVIEW_BOTS:-}"
 env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
+env_tailscale_serve="${COCKPIT_TAILSCALE_SERVE:-}"
 
 config_file="$HOME/.config/pr-cockpit/config"
 if [[ -f "$config_file" ]]; then
@@ -58,6 +59,10 @@ if [[ -n "$relay_url" ]]; then
 fi
 if [[ -n "$review_bots" ]]; then
   export COCKPIT_REVIEW_BOTS="$review_bots"
+fi
+tailscale_serve="${env_tailscale_serve:-${COCKPIT_TAILSCALE_SERVE:-}}"
+if [[ -n "$tailscale_serve" ]]; then
+  export COCKPIT_TAILSCALE_SERVE="$tailscale_serve"
 fi
 default_repo="${env_default_repo:-${COCKPIT_DEFAULT_REPO:-}}"
 
@@ -87,7 +92,7 @@ while (( arg_index < ${#args[@]} )); do
   elif [[ "$arg" == "--use-as-proxy" ]]; then
     arg_index=$((arg_index + 1))
     if (( arg_index >= ${#args[@]} )); then
-      echo "pr-cockpit: --use-as-proxy requires an SSH host" >&2
+      echo "pr-cockpit: --use-as-proxy requires a source host" >&2
       exit 2
     fi
     proxy_arg="${args[$arg_index]}"
@@ -98,11 +103,42 @@ while (( arg_index < ${#args[@]} )); do
 done
 
 proxy="${proxy_arg:-${env_proxy:-${COCKPIT_PROXY:-}}}"
-proxy="${proxy#ssh://}"
-proxy="${proxy%/}"
-if [[ -n "$proxy" && ! "$proxy" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$ ]]; then
-  echo "pr-cockpit: proxy must be an SSH host such as scape-agent or root@host" >&2
-  exit 2
+normalize_replica_source() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  [[ -n "$value" ]] || return 0
+  case "$value" in
+    https://*)
+      value="${value%/}"
+      [[ "$value" =~ ^https://[A-Za-z0-9._-]+$ ]] || return 1
+      printf '%s\n' "$value"
+      return 0
+      ;;
+    http://*)
+      value="${value%/}"
+      [[ "$value" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] || return 1
+      printf '%s\n' "$value"
+      return 0
+      ;;
+  esac
+  value="${value#ssh://}"
+  value="${value%/}"
+  if [[ "$value" =~ ^[A-Za-z0-9._-]+\.ts\.net$ ]]; then
+    printf '%s\n' "https://$value"
+    return 0
+  fi
+  if [[ "$value" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$ ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  return 1
+}
+if [[ -n "$proxy" ]]; then
+  if ! proxy="$(normalize_replica_source "$proxy")"; then
+    echo "pr-cockpit: proxy must be an SSH host such as scape-agent or root@host, or a Tailscale origin such as https://host.ts.net" >&2
+    exit 2
+  fi
 fi
 if [[ -n "$proxy" ]]; then
   export COCKPIT_REPLICA_SSH_HOST="$proxy"

@@ -8,8 +8,10 @@ import {
   normalizeCodeTheme,
   normalizeDiffLayout,
   normalizeFontPreference,
+  normalizeReplicaSshHost,
   normalizeScale,
   normalizeThemePreference,
+  replicaSourceIsHttp,
 } from "./settings.ts";
 
 describe("mergeAgents", () => {
@@ -108,6 +110,20 @@ describe("normalizeScale", () => {
   });
 });
 
+describe("normalizeReplicaSshHost", () => {
+  test("keeps SSH hosts and accepts Tailscale HTTPS origins", () => {
+    expect(normalizeReplicaSshHost("scape-agent")).toBe("scape-agent");
+    expect(normalizeReplicaSshHost("ssh://root@dev-vm/")).toBe("root@dev-vm");
+    expect(normalizeReplicaSshHost("https://hyperion.tail2e89b4.ts.net/")).toBe("https://hyperion.tail2e89b4.ts.net");
+    expect(normalizeReplicaSshHost("hyperion.tail2e89b4.ts.net")).toBe("https://hyperion.tail2e89b4.ts.net");
+    expect(normalizeReplicaSshHost("http://127.0.0.1:48203")).toBe("http://127.0.0.1:48203");
+    expect(normalizeReplicaSshHost("root@dev-vm:22")).toBe("");
+    expect(normalizeReplicaSshHost("http://evil.example")).toBe("");
+    expect(replicaSourceIsHttp("https://hyperion.tail2e89b4.ts.net")).toBe(true);
+    expect(replicaSourceIsHttp("scape-agent")).toBe(false);
+  });
+});
+
 describe("normalizeDiffLayout", () => {
   test("preserves supported layouts", () => {
     expect(normalizeDiffLayout("unified")).toBe("unified");
@@ -177,7 +193,7 @@ test("window and diff layout settings persist independently", async () => {
     expect(result.initial.diff_scale).toBe(100);
     expect(result.initial.replica_ssh_host).toBe("scape-agent");
     expect(result.replica.replica_ssh_host).toBe("root@dev-vm");
-    expect(result.invalidReplicaError).toBe("invalid replica SSH host");
+    expect(result.invalidReplicaError).toBe("invalid replica source");
     expect(result.afterInvalidReplica.replica_ssh_host).toBe("root@dev-vm");
     expect(result.afterInvalidReplica.default_repo).not.toBe("should-not-persist");
     expect(result.local.replica_ssh_host).toBe("");

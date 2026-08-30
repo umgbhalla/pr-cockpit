@@ -111,7 +111,11 @@ From a clone on the Linux host, install the loopback-only systemd user service:
 ./scripts/install-linux
 ```
 
+The process always binds `127.0.0.1`. Never bind `0.0.0.0`, open TCP 4820 on a public or LAN interface, or use Tailscale Funnel.
+
 Edit `~/.config/pr-cockpit/server.env`, then run `systemctl --user restart pr-cockpit.service`. To update the checkout and rebuild the UI without replacing that file, run `git pull && ./scripts/install-linux` again.
+
+To publish that loopback port onto your tailnet, opt in with `COCKPIT_TAILSCALE_SERVE=1` in `server.env` (or pass it on first install) and restart. Cockpit runs the equivalent of `tailscale serve --bg --https=443 http://127.0.0.1:$PORT` and adds the node's MagicDNS HTTPS origin (`https://<hostname>.<tailnet>.ts.net`) to the origin allowlist so the event socket and POSTs work. If `tailscale` is missing or Serve fails, the loopback server keeps running and logs the error. Other mesh frontends such as Twingate or Cloudflare Access still need each exact browser origin in `COCKPIT_ALLOWED_ORIGINS`.
 
 For SSH access, leave TCP port 4820 closed and tunnel it instead:
 
@@ -119,9 +123,9 @@ For SSH access, leave TCP port 4820 closed and tunnel it instead:
 ssh -N -L 4820:127.0.0.1:4820 user@host
 ```
 
-Then open `http://127.0.0.1:4820`.
+Then open `http://127.0.0.1:4820`. A replica can use the Serve origin instead of SSH: `COCKPIT_PROXY=https://hostname.tailxxxx.ts.net` or `pr-cockpit --use-as-proxy https://hostname.tailxxxx.ts.net`. SSH remains for hosts that are not on the tailnet.
 
-For phone access, keep the loopback binding and put a mesh VPN in front of it. A VPN whose agent runs on the same host reaches `127.0.0.1:4820` directly, so nothing has to listen on a public address. With Twingate, install a Connector on the host and define a Resource with address `127.0.0.1`, an alias, and TCP restricted to port `4820`; Tailscale Serve and Cloudflare Access work the same way. Add each exact browser origin to the comma-separated `COCKPIT_ALLOWED_ORIGINS` value in `server.env` (for example, `COCKPIT_ALLOWED_ORIGINS="http://cockpit.example.internal:4820"`) and restart the service, because unsafe requests and the event socket reject untrusted origins. Never bind PR Cockpit publicly or open port 4820.
+For phone access without Serve, keep the loopback binding and put a mesh VPN in front of it. A VPN whose agent runs on the same host reaches `127.0.0.1:4820` directly, so nothing has to listen on a public address. With Twingate, install a Connector on the host and define a Resource with address `127.0.0.1`, an alias, and TCP restricted to port `4820`. Add each exact browser origin to the comma-separated `COCKPIT_ALLOWED_ORIGINS` value in `server.env` (for example, `COCKPIT_ALLOWED_ORIGINS="http://cockpit.example.internal:4820"`) and restart the service, because unsafe requests and the event socket reject untrusted origins.
 
 ## Start in four steps
 
@@ -157,6 +161,8 @@ Settings live in the app. Optional shell overrides live in `~/.config/pr-cockpit
 | --- | --- |
 | `COCKPIT_REPOS` | Comma-separated `owner/repo` list |
 | `COCKPIT_PORT` | Local HTTP port; defaults to `4820` |
+| `COCKPIT_TAILSCALE_SERVE` | Set to `1` to publish loopback over Tailscale Serve and auto-allow the MagicDNS origin |
+| `COCKPIT_PROXY` | Replica source: SSH host, or a Tailscale MagicDNS HTTPS origin |
 | `COCKPIT_DEFAULT_REPO` | Repository assumed when a PR number is passed alone |
 | `COCKPIT_REPO_ROOTS` | Paths containing local checkouts |
 | `COCKPIT_RELAY_URL` | [Self-hosted webhook relay](docs/self-host-relay.md) |

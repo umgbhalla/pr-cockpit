@@ -748,3 +748,41 @@ test("proxy backend starts a local replica server", async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("proxy backend accepts a Tailscale MagicDNS origin without SSH", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-proxy-tailscale-"));
+  const bin = join(home, "bin");
+  const dataDir = join(home, "data");
+  const argsFile = join(home, "replica-env");
+  mkdirSync(bin);
+  const bun = join(bin, "bun");
+  writeFileSync(bun, '#!/usr/bin/env bash\nprintf \"%s\\n\" \"$COCKPIT_REPLICA_SSH_HOST\" \"$COCKPIT_PROXY_PORT\" \"$COCKPIT_PORT\" > \"$PROXY_ARGS\"\n');
+  chmodSync(bun, 0o755);
+
+  try {
+    const child = Bun.spawn(
+      [join(import.meta.dir, "cockpit"), "--server-only", "--use-as-proxy", "https://hyperion.tail2e89b4.ts.net"],
+      {
+        env: {
+          ...Bun.env,
+          HOME: home,
+          PATH: `${bin}:${Bun.env.PATH}`,
+          COCKPIT_DATA_DIR: dataDir,
+          COCKPIT_PORT: "4892",
+          COCKPIT_PROXY_PORT: "4820",
+          PROXY_ARGS: argsFile,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(await child.exited).toBe(0);
+    expect(readFileSync(argsFile, "utf8").trim().split("\n")).toEqual([
+      "https://hyperion.tail2e89b4.ts.net",
+      "4820",
+      "4892",
+    ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

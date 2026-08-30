@@ -51,7 +51,7 @@ export async function startGithubSetup(scopes: readonly string[] = ["repo", "wor
 
 export async function ghToken(): Promise<string> {
   if (mockGithub) return "fixture-token";
-  if (readSettings().replica_ssh_host) throw new Error("GitHub access is disabled while PR Cockpit uses an SSH replica");
+  if (readSettings().replica_ssh_host) throw new Error("GitHub access is disabled while PR Cockpit uses a replica");
   return liveGithubToken();
 }
 

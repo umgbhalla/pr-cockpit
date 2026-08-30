@@ -109,3 +109,65 @@ test("a local server imports inbox state and proxies GitHub-backed APIs through 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a replica can reach a MagicDNS or HTTP origin without opening an SSH tunnel", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pr-cockpit-replica-http-"));
+  const sourcePort = reservePort();
+  const replicaPort = reservePort();
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ssh"), "#!/usr/bin/env bash\necho ssh-should-not-run >&2\nexit 1\n");
+  chmodSync(join(bin, "ssh"), 0o755);
+
+  const source = Bun.spawn([Bun.which("bun") ?? "bun", "server/main.ts"], {
+    cwd: join(import.meta.dir, ".."),
+    env: {
+      ...Bun.env,
+      COCKPIT_PORT: String(sourcePort),
+      COCKPIT_DATA_DIR: join(root, "source"),
+      COCKPIT_MOCK: "1",
+      COCKPIT_REPLICA_SSH_HOST: "",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let replica: Bun.Subprocess | null = null;
+
+  try {
+    await waitForServer(sourcePort, source);
+    replica = Bun.spawn([Bun.which("bun") ?? "bun", "server/main.ts"], {
+      cwd: join(import.meta.dir, ".."),
+      env: {
+        ...Bun.env,
+        PATH: `${bin}:${Bun.env.PATH}`,
+        COCKPIT_PORT: String(replicaPort),
+        COCKPIT_DATA_DIR: join(root, "replica"),
+        COCKPIT_MOCK: "",
+        COCKPIT_REPLICA_SSH_HOST: `http://127.0.0.1:${sourcePort}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await waitForServer(replicaPort, replica);
+    const status = await fetch(`http://127.0.0.1:${replicaPort}/api/replica/status`).then((response) => response.json()) as {
+      connected: boolean;
+      host: string;
+      lastError: string | null;
+    };
+    expect(status).toEqual(expect.objectContaining({
+      connected: true,
+      host: `http://127.0.0.1:${sourcePort}`,
+      lastError: null,
+    }));
+    const sourceInbox = await fetch(`http://127.0.0.1:${sourcePort}/api/inbox`).then((response) => response.json()) as { prs: Array<{ repo: string; number: number }> };
+    const replicaInbox = await fetch(`http://127.0.0.1:${replicaPort}/api/inbox`).then((response) => response.json()) as { prs: Array<{ repo: string; number: number }> };
+    expect(replicaInbox.prs.map(({ repo, number }) => `${repo}#${number}`)).toEqual(
+      sourceInbox.prs.map(({ repo, number }) => `${repo}#${number}`),
+    );
+  } finally {
+    replica?.kill();
+    source.kill();
+    await Promise.all([replica?.exited, source.exited]);
+    rmSync(root, { recursive: true, force: true });
+  }
+});

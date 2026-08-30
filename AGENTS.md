@@ -25,7 +25,7 @@ This repository is worked on by humans and coding agents alike. Leave it easier 
 - File status lives in the colored leading icon; moved files use a distinct move glyph, never a text badge beside the name.
 - Agents mutate existing PRs through `pr-cockpit`; use its `--body-file` commands for exact multiline text, never `gh` or direct GitHub APIs.
 - Do not perform Vercel or `forge.scape.app` infrastructure work from this repository.
-- For manual app recordings, launch `/Users/theo/dev/pr-cockpit`; this `pr-cockpit-v3` checkout is the legacy landing worktree.
+- For manual app recordings, launch the checkout you mean to record, or the installed app on that machine. Do not hard-code another contributor’s path.
 
 ## Pull requests
 
@@ -43,13 +43,15 @@ Server environment:
 COCKPIT_PORT=4820                                  # HTTP port
 COCKPIT_DATA_DIR="$HOME/.local/share/pr-cockpit"   # SQLite cache, images, queued actions
 COCKPIT_REPOS="owner/repo,owner/other-repo"        # seeds tracked repos on first launch
-COCKPIT_PROXY="scape-agent"                        # optional Cockpit replica source over SSH
+COCKPIT_PROXY="scape-agent"                        # optional replica source: SSH host, or https://host.ts.net
 COCKPIT_PROXY_PORT=4820                            # Cockpit port on that SSH host
+COCKPIT_TAILSCALE_SERVE=1                          # opt-in: Tailscale Serve on 443 → loopback (never Funnel)
+COCKPIT_ALLOWED_ORIGINS="https://host.example"     # extra browser origins; Serve adds MagicDNS itself
 ```
 
 `COCKPIT_MANAGED=1` is exported by `scripts/cockpit` and read by the Electron shell, not the server. It marks the installed instance so a dev launch stays isolated from it.
 
-Replica mode keeps the Bun server, SQLite cache, UI, Electron shell, and image fetches on the Mac. `scripts/cockpit --use-as-proxy HOST` and `pr-cockpit --use-as-proxy HOST ...` tunnel the remote Cockpit API, replicate its inbox state, and disable local GitHub API access. A replica outage must surface as an outage, never fall back to local polling, and local install or quit paths must never shut down the remote server.
+Replica mode keeps the Bun server, SQLite cache, UI, Electron shell, and image fetches on the Mac. `scripts/cockpit --use-as-proxy HOST` and `pr-cockpit --use-as-proxy HOST ...` replicate a remote Cockpit inbox and disable local GitHub API access. HOST is an SSH name, or a Tailscale MagicDNS origin such as `https://hostname.tailxxxx.ts.net` when the source already publishes with Serve. A replica outage must surface as an outage, never fall back to local polling, and local install or quit paths must never shut down the remote server.
 Before pushing replica or server-topology changes, verify the installed Electron app, image rendering, and CLI against the intended backend.
 
 Runbook:
@@ -98,6 +100,6 @@ After a task needs non-obvious investigation, repeated failed attempts, or a rec
 - The Forgejo host mounts `/run` with `noexec`; invoke migration helpers through `bash` or `python3` rather than executing files there directly.
 - Forgejo hides pull requests when `repository.is_mirror` is true even if the unit is enabled. Keep the `mirror` row, clear only `is_mirror`, limit its refspecs to heads and tags, and maintain each native PR's hidden `refs/pull/<N>/head`; create an ordinary fallback branch only for an active fork PR and write both refs as UID/GID `994:984`.
 - Long authenticated browser benchmarks run one measured process at a time. Retry and discard only transport-failed iterations, checkpoint each complete product sample set under `.scratch`, and publish only after every product reaches the declared successful sample count.
-- A phone reaches a hosted cockpit through a mesh VPN whose agent runs on the same host: the Twingate Connector shares the host network namespace, so the Resource keeps address `127.0.0.1` with TCP restricted to the cockpit port, and the alias origin must be added to `COCKPIT_ALLOWED_ORIGINS` or the event socket and every unsafe request return `403`. A new Resource is visible per identity, so `twingate resources` on one host can omit a Resource that another account already reaches; verify from the account that will use it.
+- A phone reaches a hosted cockpit through a mesh VPN whose agent runs on the same host. Tailscale Serve is the opt-in product path: `COCKPIT_TAILSCALE_SERVE=1` keeps the process on `127.0.0.1`, publishes HTTPS 443 on the tailnet, and auto-adds `https://<hostname>.<magicdns-suffix>` to the origin allowlist. Never use Funnel, never bind `0.0.0.0`, never open TCP 4820. Twingate still uses a Connector on the host with Resource address `127.0.0.1` and TCP restricted to the cockpit port; that alias origin must be added to `COCKPIT_ALLOWED_ORIGINS` or the event socket and every unsafe request return `403`. A new Twingate Resource is visible per identity, so `twingate resources` on one host can omit a Resource that another account already reaches; verify from the account that will use it.
 
 Keep entries short and current. When a new procedure supersedes an old one, replace the old instruction rather than leaving conflicting advice.

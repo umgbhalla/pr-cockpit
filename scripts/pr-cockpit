@@ -48,7 +48,7 @@ Options:
   --ci-only           with listen REF, wake only for CI changes or current failure
   --comments-only     with listen REF, wake only for comment changes or current open comments
   --use-as-proxy HOST
-                      reach the authoritative Cockpit server through SSH
+                      reach the authoritative Cockpit over SSH or a Tailscale HTTPS origin
   -h, --help          show this help
 
 Read options:
@@ -299,13 +299,44 @@ elif [[ -n "$env_port" ]]; then
 else
   proxy="${COCKPIT_PROXY:-}"
 fi
-proxy="${proxy#ssh://}"
-proxy="${proxy%/}"
-proxy_port="${env_proxy_port:-${COCKPIT_PROXY_PORT:-4820}}"
-if [[ -n "$proxy" && ! "$proxy" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$ ]]; then
-  echo "pr-cockpit: proxy must be an SSH host such as scape-agent or root@host" >&2
-  exit 2
+normalize_replica_source() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  [[ -n "$value" ]] || return 0
+  case "$value" in
+    https://*)
+      value="${value%/}"
+      [[ "$value" =~ ^https://[A-Za-z0-9._-]+$ ]] || return 1
+      printf '%s\n' "$value"
+      return 0
+      ;;
+    http://*)
+      value="${value%/}"
+      [[ "$value" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]] || return 1
+      printf '%s\n' "$value"
+      return 0
+      ;;
+  esac
+  value="${value#ssh://}"
+  value="${value%/}"
+  if [[ "$value" =~ ^[A-Za-z0-9._-]+\.ts\.net$ ]]; then
+    printf '%s\n' "https://$value"
+    return 0
+  fi
+  if [[ "$value" =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$ ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  return 1
+}
+if [[ -n "$proxy" ]]; then
+  if ! proxy="$(normalize_replica_source "$proxy")"; then
+    echo "pr-cockpit: proxy must be an SSH host such as scape-agent or root@host, or a Tailscale origin such as https://host.ts.net" >&2
+    exit 2
+  fi
 fi
+proxy_port="${env_proxy_port:-${COCKPIT_PROXY_PORT:-4820}}"
 bun_bin=$(command -v bun || true)
 [[ -n "$bun_bin" ]] || { echo "pr-cockpit: bun is required" >&2; exit 1; }
 
