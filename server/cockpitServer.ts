@@ -1,8 +1,15 @@
 import { setRendererInvalidationPublisher } from "./rendererInvalidation.ts";
+import { servePeerAllowsOrigin, tailscaleWhois } from "./tailscaleServe.ts";
 
 type FetchHandler = (request: Request) => Response | Promise<Response>;
 
 const UNSAFE_BROWSER_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
+
+export type OriginPolicyOptions = {
+  magicDnsSuffix?: string | null;
+  trustServeIdentity?: boolean;
+  whois?: (addr: string) => Promise<boolean>;
+};
 
 function parseAllowedOrigins(configured: string | undefined): Set<string> {
   const origins = new Set<string>();
@@ -36,35 +43,44 @@ export function mergeRendererOrigins(...entries: Array<string | undefined | null
   return origins.size === 0 ? undefined : [...origins].join(",");
 }
 
-function buildOriginPolicy(configured: string | undefined): (request: Request) => boolean {
+function buildOriginPolicy(
+  configured: string | undefined,
+  options: OriginPolicyOptions = {},
+): (request: Request) => boolean | Promise<boolean> {
   const allowedOrigins = parseAllowedOrigins(configured);
+  const trustServeIdentity = options.trustServeIdentity === true;
+  const whois = options.whois ?? (trustServeIdentity ? tailscaleWhois : undefined);
   return (request) => {
     const origin = request.headers.get("origin");
     if (origin === null) return request.headers.get("sec-fetch-site") !== "cross-site";
     if (allowedOrigins.has(origin)) return true;
     try {
       const url = new URL(origin);
-      return (url.protocol === "http:" || url.protocol === "https:")
-        && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]");
+      if ((url.protocol === "http:" || url.protocol === "https:")
+        && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")) {
+        return true;
+      }
     } catch {
       return false;
     }
+    if (!trustServeIdentity) return false;
+    return servePeerAllowsOrigin(request, origin, { magicDnsSuffix: options.magicDnsSuffix, whois });
   };
 }
 
-export function startCockpitServer(port: number, fetchHandler: FetchHandler, allowedOrigins?: string) {
-  const originAllowed = buildOriginPolicy(allowedOrigins ?? Bun.env.COCKPIT_ALLOWED_ORIGINS);
+export function startCockpitServer(port: number, fetchHandler: FetchHandler, allowedOrigins?: string, options?: OriginPolicyOptions) {
+  const originAllowed = buildOriginPolicy(allowedOrigins ?? Bun.env.COCKPIT_ALLOWED_ORIGINS, options);
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
-    fetch(request, bunServer) {
+    async fetch(request, bunServer) {
       if (new URL(request.url).pathname === "/api/events") {
-        if (!originAllowed(request)) return new Response("Forbidden", { status: 403 });
+        if (!await originAllowed(request)) return new Response("Forbidden", { status: 403 });
         return bunServer.upgrade(request)
           ? undefined
           : new Response("WebSocket upgrade required", { status: 426 });
       }
-      if (UNSAFE_BROWSER_METHODS[request.method] && !originAllowed(request)) {
+      if (UNSAFE_BROWSER_METHODS[request.method] && !await originAllowed(request)) {
         return new Response("Forbidden", { status: 403 });
       }
       return fetchHandler(request);

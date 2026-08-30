@@ -6,6 +6,7 @@ import { testMatcher } from "../ui/src/lib/testPath.js";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resetTailscaleServeStatus, startTailscaleServe } from "./tailscaleServe.ts";
 
 const pr = { additions: 999, deletions: 999 } as any;
 const testRe = testMatcher("");
@@ -775,6 +776,45 @@ describe("agent PR summary", () => {
     ));
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "loopback CLI request required" });
+  });
+
+  test("accepts CLI mutations addressed to a published Serve hostname", async () => {
+    await startTailscaleServe(4820, {
+      enabled: true,
+      which: () => "/usr/bin/tailscale",
+      run: async (args) => {
+        if (args[0] === "serve") return { exitCode: 0, stdout: "", stderr: "" };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }),
+          stderr: "",
+        };
+      },
+    });
+    try {
+      const accepted = await buildFetchHandler(4820)(new Request(
+        "http://127.0.0.1:4820/api/agent/pr/example-org/webapp/6133/threads/0123456789",
+        {
+          method: "POST",
+          headers: { host: "hyperion.tail2e89b4.ts.net", "x-pr-cockpit-cli": "1" },
+        },
+      ));
+      expect(accepted.status).not.toBe(403);
+      const funnel = await buildFetchHandler(4820)(new Request(
+        "http://127.0.0.1:4820/api/agent/pr/example-org/webapp/6133/threads/0123456789",
+        {
+          method: "POST",
+          headers: {
+            host: "hyperion.tail2e89b4.ts.net",
+            "x-pr-cockpit-cli": "1",
+            "tailscale-funnel-request": "1",
+          },
+        },
+      ));
+      expect(funnel.status).toBe(403);
+    } finally {
+      resetTailscaleServeStatus();
+    }
   });
 
   test("rejects malformed agent diff references", async () => {
