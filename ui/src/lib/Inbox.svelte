@@ -14,7 +14,6 @@
   import { prefs } from "./prefs.svelte.js";
   import { isTypingTarget, shouldCopyPrUrl } from "./dom.js";
   import { scrollEdge } from "./scroll.js";
-  import KeyBar from "./KeyBar.svelte";
   import Avatar from "./Avatar.svelte";
   import UpdateButton from "./UpdateButton.svelte";
   import { timedFlag } from "./timedFlag.svelte.js";
@@ -512,33 +511,6 @@
     if (selected > ordered.length - 1) selected = Math.max(0, ordered.length - 1);
   });
 
-  let keyBarKeys = $derived.by(() => {
-    const pr = ordered[selected];
-    const keys = [
-      { key: "j / k", label: "move" },
-      { key: "⏎", label: "open" },
-    ];
-    if (view === "closed") {
-      keys.push({ key: "o", label: "github" });
-      keys.push({ key: "C", label: "back to open" });
-      return keys;
-    }
-    if (pr) keys.push({ key: "e", label: isArchived(pr) ? "unarchive" : "archive" });
-    keys.push({ key: "A", label: showArchived ? "hide archived" : "archived" });
-    keys.push({ key: "C", label: "recently merged" });
-    if (pr) {
-      for (const a of keybindAgents) {
-        if (a.id === "fixer") continue;
-        if (a.id === "autofix") keys.push({ key: a.keybind, label: multiRange ? "autofix selected" : "autofix" });
-        else if (a.id === "rescorer") keys.push({ key: a.keybind, label: "re-score" });
-        else if (pr.fixerAgentState !== "running") keys.push({ key: a.keybind, label: a.name || "custom agent" });
-      }
-    }
-    keys.push({ key: "⇧J / ⇧K", label: "select range" });
-    keys.push({ key: "o", label: "github" });
-    return keys;
-  });
-
   function scrollSelectedIntoView() {
     requestAnimationFrame(() => {
       document.querySelector(".inbox .row.selected")?.scrollIntoView({ block: "nearest" });
@@ -932,7 +904,7 @@
       </a>
     {/snippet}
 
-    <div class="inbox-layout">
+    <div class="inbox-layout" class:empty-layout={view === "open" && loaded && !error && !syncing && prs.length === 0}>
       <div class="queue-list">
         {#if view === "closed"}
           {#if !closedLoaded}
@@ -1062,8 +1034,6 @@
   <div class="copied-flash">Archived — <kbd>z</kbd> to undo</div>
 {:else if bulkAutofixFlash.value}
   <div class="copied-flash">{bulkAutofixFlash.value}</div>
-{:else}
-  <KeyBar keys={keyBarKeys} />
 {/if}
 
 <style>
@@ -1593,6 +1563,24 @@
     grid-template-columns: minmax(0, 1fr) 236px;
     align-items: start;
     gap: 20px;
+  }
+  .inbox-layout.empty-layout {
+    grid-template-columns: minmax(0, 640px);
+    justify-content: center;
+    gap: 8px;
+    padding-top: clamp(24px, 8vh, 88px);
+  }
+  .empty-layout .empty {
+    min-height: 120px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    font-size: 14px;
+  }
+  .empty-layout .queue-sidecar {
+    position: static;
+    width: min(100%, 420px);
+    margin: 0 auto;
   }
   .queue-list {
     min-width: 0;

@@ -5,7 +5,6 @@
   import { BUILTIN_TEST_PATH } from "./testPath.js";
   import { isTypingTarget } from "./dom.js";
   import { scrollStep, scrollPage, scrollEdge } from "./scroll.js";
-  import KeyBar from "./KeyBar.svelte";
   import ShortcutInput from "./ShortcutInput.svelte";
   import Kbd from "./Kbd.svelte";
   import SettingsAnalytics from "./SettingsAnalytics.svelte";
@@ -681,10 +680,6 @@
     {/if}
   </div>
 </div>
-
-{#if activeTab !== "analytics"}
-  <KeyBar keys={[{ key: "⌘s", label: "save" }, { key: "esc", label: "back" }]} />
-{/if}
 
 <style>
   .page {

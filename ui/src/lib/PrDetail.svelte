@@ -60,7 +60,6 @@
   import Thread from "./Thread.svelte";
   import MutationBadge from "./MutationBadge.svelte";
   import MutationFailure from "./MutationFailure.svelte";
-  import KeyBar from "./KeyBar.svelte";
   import Avatar from "./Avatar.svelte";
   import Reactions from "./Reactions.svelte";
   import UserPicker from "./UserPicker.svelte";
@@ -2069,63 +2068,6 @@
     };
   });
 
-  let mergeKey = $derived(
-    mergeGate.action === "update" ? { key: "u", label: "update branch" } : { key: "m", label: "merge" },
-  );
-  let fixerDef = $derived(keybindAgents.find((a) => a.id === "fixer"));
-  let autoMergeKeys = $derived(fixerDef ? [{ key: fixerDef.keybind, label: pr?.autoMergeEnabled ? "disarm bot" : "auto-merge bot" }] : []);
-  let agentActionKeys = $derived(
-    keybindAgents.flatMap((a) => {
-      if (a.id === "fixer") return [];
-      if (a.id === "autofix") return agent?.state !== "running" && !prIsGreen && !mergedState ? [{ key: a.keybind, label: "auto-fix" }] : [];
-      if (a.id === "rescorer") return [{ key: a.keybind, label: "re-score" }];
-      return agent?.state !== "running" ? [{ key: a.keybind, label: a.name || "custom agent" }] : [];
-    }),
-  );
-  let localCheckoutKeys = $derived(pr?.localCheckoutPath && !onLocalBranch ? [{ key: "t", label: "switch branch" }] : []);
-  let conversationKeys = $derived([
-    { key: "d", label: "files" },
-    { key: "c", label: "comment" },
-    { key: "r", label: "reply" },
-    { key: "e", label: "edit inline" },
-    { key: "⇧E", label: "editor" },
-    ...(canReview ? [{ key: "v", label: "review" }] : []),
-    { key: "s", label: "assign" },
-    { key: "q", label: "request review" },
-    { key: "p", label: "prompt agent" },
-    ...agentActionKeys,
-    mergeKey,
-    { key: "x", label: "close" },
-    ...autoMergeKeys,
-    { key: "o", label: "github" },
-    ...localCheckoutKeys,
-    { key: "esc", label: "back" },
-  ]);
-  let filesKeys = $derived([
-    { key: "d", label: "conversation" },
-    { key: "J / K", label: "file" },
-    { key: "v", label: "toggle file viewed" },
-    { key: "c", label: "changes range" },
-    { key: "x", label: "hide tests" },
-    { key: "h", label: "file history" },
-    { key: "r", label: "reply" },
-    { key: "e", label: "edit inline" },
-    { key: "⇧E", label: "editor" },
-    { key: "s", label: "assign" },
-    { key: "q", label: "request review" },
-    mergeKey,
-    ...autoMergeKeys,
-    { key: "o", label: "github" },
-    ...localCheckoutKeys,
-    { key: "esc", label: "back" },
-  ]);
-  let tabKeys = $derived([
-    { key: "⌘1 / ⌘2 / ⌘3 / ⌘4", label: "switch tab" },
-    { key: "x", label: "close" },
-    { key: "o", label: tab === "actions" && actionsRunUrl ? "github run" : "github" },
-    ...localCheckoutKeys,
-    { key: "esc", label: "back" },
-  ]);
 </script>
 
 <div class="page">
@@ -3262,8 +3204,6 @@
       <div class="keybar copied-flash">Copied {fixPromptCopied.value === "ci" ? "failing CI" : "merge conflict"} fix prompt</div>
     {:else if copied.value}
       <div class="keybar copied-flash">{copied.value}</div>
-    {:else}
-      <KeyBar keys={tab === "files" ? filesKeys : tab === "agents" || tab === "actions" ? tabKeys : conversationKeys} />
     {/if}
 
     <Telescope bind:this={telescope} {repo} headSha={pr.headRefOid} headRef={pr.headRefName} {testsHidden} changedFiles={files} onOpenChangedFile={openChangedFile} onOpenHistory={openFileHistory} bind:open={telescopeOpen} />
