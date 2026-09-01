@@ -42,7 +42,7 @@
   }
 
   .flash-bar {
-    bottom: 16px;
+    bottom: calc(var(--keybar-height) + 16px);
     gap: 10px;
     min-height: 42px;
     padding: 10px 10px 10px 14px;

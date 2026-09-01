@@ -14,6 +14,7 @@
   import { prefs } from "./prefs.svelte.js";
   import { isTypingTarget, shouldCopyPrUrl } from "./dom.js";
   import { scrollEdge } from "./scroll.js";
+  import KeyBar from "./KeyBar.svelte";
   import Avatar from "./Avatar.svelte";
   import UpdateButton from "./UpdateButton.svelte";
   import { timedFlag } from "./timedFlag.svelte.js";
@@ -518,6 +519,33 @@
     if (selected > ordered.length - 1) selected = Math.max(0, ordered.length - 1);
   });
 
+  let keyBarKeys = $derived.by(() => {
+    const pr = ordered[selected];
+    const keys = [
+      { key: "j / k", label: "move" },
+      { key: "⏎", label: "open" },
+    ];
+    if (view === "closed") {
+      keys.push({ key: "o", label: "github" });
+      keys.push({ key: "C", label: "back to open" });
+      return keys;
+    }
+    if (pr) keys.push({ key: "e", label: isArchived(pr) ? "unarchive" : "archive" });
+    keys.push({ key: "A", label: showArchived ? "hide archived" : "archived" });
+    keys.push({ key: "C", label: "recently merged" });
+    if (pr) {
+      for (const a of keybindAgents) {
+        if (a.id === "fixer") continue;
+        if (a.id === "autofix") keys.push({ key: a.keybind, label: multiRange ? "autofix selected" : "autofix" });
+        else if (a.id === "rescorer") keys.push({ key: a.keybind, label: "re-score" });
+        else if (pr.fixerAgentState !== "running") keys.push({ key: a.keybind, label: a.name || "custom agent" });
+      }
+    }
+    keys.push({ key: "⇧J / ⇧K", label: "select range" });
+    keys.push({ key: "o", label: "github" });
+    return keys;
+  });
+
   function scrollSelectedIntoView() {
     requestAnimationFrame(() => {
       document.querySelector(".inbox .row.selected")?.scrollIntoView({ block: "nearest" });
@@ -922,7 +950,7 @@
       </a>
     {/snippet}
 
-    <div class="inbox-layout" class:empty-layout={view === "open" && loaded && !error && !syncing && prs.length === 0}>
+    <div class="inbox-layout" class:empty-layout={view === "open" && loaded && !error && !syncing && (prs.length === 0 || Boolean(repoFilter && filteredPrs.length === 0))}>
       <div class="queue-list">
         {#if view === "closed"}
           {#if !closedLoaded}
@@ -942,6 +970,8 @@
             <div class="empty">Syncing with GitHub…</div>
           {:else if loaded && prs.length === 0}
             <div class="empty">No open pull requests</div>
+          {:else if repoFilter && filteredPrs.length === 0}
+            <div class="empty">No open pull requests in {repoFilter}</div>
           {:else if wantsHistory(filterQuery) && !historyActive}
             <div class="empty">Searching history…</div>
           {:else if filterQuery && filteredPrs.length === 0}
@@ -1052,6 +1082,8 @@
   <div class="copied-flash">Archived — <kbd>z</kbd> to undo</div>
 {:else if bulkAutofixFlash.value}
   <div class="copied-flash">{bulkAutofixFlash.value}</div>
+{:else}
+  <KeyBar keys={keyBarKeys} />
 {/if}
 
 <style>
@@ -1602,22 +1634,14 @@
     gap: 20px;
   }
   .inbox-layout.empty-layout {
-    grid-template-columns: minmax(0, 640px);
-    justify-content: center;
-    gap: 8px;
-    padding-top: clamp(24px, 8vh, 88px);
+    padding-top: clamp(8px, 3vh, 32px);
   }
   .empty-layout .empty {
-    min-height: 120px;
+    min-height: clamp(160px, 34vh, 360px);
     display: grid;
     place-items: center;
     border: 0;
     font-size: 14px;
-  }
-  .empty-layout .queue-sidecar {
-    position: static;
-    width: min(100%, 420px);
-    margin: 0 auto;
   }
   .queue-list {
     min-width: 0;
@@ -1962,6 +1986,28 @@
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+  }
+  .queue-toolbar .view-tabs {
+    margin: 0;
+  }
+  .queue-toolbar {
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .repo-filter {
+    margin-left: auto;
+  }
+  .repo-filter select {
+    min-height: 32px;
+    max-width: 260px;
+    padding: 0 32px 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background-color: var(--panel);
+    box-shadow: var(--shadow-control-outlined);
+    color: var(--text);
+    font: 500 14px var(--sans);
   }
   .view-tab {
     min-height: 32px;

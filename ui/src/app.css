@@ -81,6 +81,7 @@
   --radius-lg: 12px;
   --control-sm: 28px;
   --control-md: 34px;
+  --keybar-height: 44px;
   --app-rail-width: 0px;
 
   /* Native hue for recognition; text mixing keeps compact labels accessible. */
@@ -122,6 +123,10 @@
 }
 
 @media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+  :root {
+    --keybar-height: 0px;
+  }
+
   /* Mobile Safari zooms the page when a focused form control is below 16px.
      Keep text controls readable without disabling user zoom. */
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
