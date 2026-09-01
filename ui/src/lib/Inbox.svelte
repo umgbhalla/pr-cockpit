@@ -274,7 +274,7 @@
       const selectedKey = view === "closed" && ordered[selected] ? prKey(ordered[selected]) : null;
       closedPrs = res.prs;
       if (selectedKey !== null) {
-        const idx = closedPrs.findIndex((pr) => prKey(pr) === selectedKey);
+        const idx = filterByRepository(closedPrs, repoFilter).findIndex((pr) => prKey(pr) === selectedKey);
         if (idx >= 0) selected = idx;
       }
     } catch {
@@ -326,6 +326,8 @@
   let queryFilteredPrs = $derived(wantsHistory(filterQuery) ? (historyQuery === filterQuery.trim() ? historyPrs : []) : filterPrs(prs, filterQuery, showArchived));
   let availableRepos = $derived(availableRepositories(configuredRepos, prs, archivedPrs, closedPrs));
   let filteredPrs = $derived(filterByRepository(queryFilteredPrs, repoFilter));
+  let filteredClosedPrs = $derived(filterByRepository(closedPrs, repoFilter));
+  let actionsHref = $derived(`#/actions?repo=${encodeURIComponent(repoFilter)}`);
   let activeView = $derived(savedViews.find((v) => v.query === filterQuery.trim())?.name ?? null);
 
   // history views can't be counted from the open inbox; show the live count only while applied, else a placeholder
@@ -511,7 +513,7 @@
     const pr = prs.find((p) => prKey(p) === dragKey);
     return pr ? classify(topUnit(pr), viewerLogin).group : null;
   });
-  let ordered = $derived(view === "closed" ? closedPrs : showArchived ? [...openOrdered, ...archivedPrs] : openOrdered);
+  let ordered = $derived(view === "closed" ? filteredClosedPrs : showArchived ? [...openOrdered, ...archivedPrs] : openOrdered);
   let archivedSet = $derived(new Set(archivedPrs.map((pr) => prKey(pr))));
   const isArchived = (pr) => archivedSet.has(prKey(pr));
 
@@ -775,13 +777,13 @@
       <div class="view-tabs" role="tablist" aria-label="List view">
         <button class="view-tab" role="tab" aria-selected={view === "open"} class:active={view === "open"} onclick={() => showView("open")}>
           Open
-          <span class="view-tab-count">{prs.length}</span>
+          <span class="view-tab-count">{filterByRepository(prs, repoFilter).length}</span>
           {#if view === "closed"}<Kbd keys="tab" />{/if}
         </button>
         <button class="view-tab" role="tab" aria-selected={view === "closed"} class:active={view === "closed"} onclick={() => showView("closed")}>
           Recently merged {#if view === "open"}<Kbd keys="tab" />{/if}
         </button>
-        <a class="view-tab" role="tab" aria-selected="false" href="#/actions">Actions</a>
+        <a class="view-tab" role="tab" aria-selected="false" href={actionsHref}>Actions</a>
       </div>
       <label class="repo-filter">
         <span class="sr-only">Repository</span>
@@ -957,10 +959,12 @@
             <div class="empty">Loading recent merges…</div>
           {:else if closedPrs.length === 0}
             <div class="empty">Nothing merged or closed yet</div>
+          {:else if filteredClosedPrs.length === 0}
+            <div class="empty">Nothing merged or closed in {repoFilter}</div>
           {/if}
           <section class="queue-group">
             <div class="group-body">
-              {#each closedPrs as pr (prKey(pr))}{@render closedRow(pr)}{/each}
+              {#each filteredClosedPrs as pr (prKey(pr))}{@render closedRow(pr)}{/each}
             </div>
           </section>
         {:else}
