@@ -284,6 +284,7 @@ env_port="${COCKPIT_PORT:-}"
 env_data_dir="${COCKPIT_DATA_DIR:-}"
 env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
+env_origin_set="${COCKPIT_ORIGIN+x}"
 env_origin="${COCKPIT_ORIGIN:-}"
 env_tailscale_service="${COCKPIT_TAILSCALE_SERVICE:-}"
 if [[ -f "$config_file" ]]; then
@@ -292,7 +293,11 @@ if [[ -f "$config_file" ]]; then
 fi
 port="${env_port:-${COCKPIT_PORT:-4820}}"
 data_dir="${env_data_dir:-${COCKPIT_DATA_DIR:-$HOME/.local/share/pr-cockpit}}"
-origin_override="${env_origin:-${COCKPIT_ORIGIN:-}}"
+if [[ "$env_origin_set" == "x" ]]; then
+  origin_override="$env_origin"
+else
+  origin_override="${COCKPIT_ORIGIN:-}"
+fi
 tailscale_service="${env_tailscale_service:-${COCKPIT_TAILSCALE_SERVICE:-}}"
 if [[ -n "$proxy_arg" ]]; then
   proxy="$proxy_arg"

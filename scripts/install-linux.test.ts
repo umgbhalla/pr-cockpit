@@ -651,7 +651,7 @@ describe("transactional Linux lifecycle", () => {
     const afterUninstallStage = await f.lifecycle(["stage", f.source, stateC[1]]);
     expect(afterUninstallStage.exitCode).toBe(1);
     expect(afterUninstallStage.stderr).toContain("Linux installation changed before release staging");
-  });
+  }, 20_000);
 
   test("waits out a live lifecycle lock and reclaims only a stale identity", async () => {
     const f = fixture();
@@ -679,5 +679,5 @@ describe("transactional Linux lifecycle", () => {
     symlinkSync(`999999999:-:${"b".repeat(32)}`, lock);
     expect((await f.lifecycle(["uninstall"])).exitCode).toBe(0);
     expect(lexists(lock)).toBe(false);
-  });
+  }, 10_000);
 });

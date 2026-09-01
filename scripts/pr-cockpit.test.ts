@@ -1,7 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const originalCockpitOrigin = Bun.env.COCKPIT_ORIGIN;
+Bun.env.COCKPIT_ORIGIN = "";
+afterAll(() => {
+  if (originalCockpitOrigin === undefined) delete Bun.env.COCKPIT_ORIGIN;
+  else Bun.env.COCKPIT_ORIGIN = originalCockpitOrigin;
+});
 
 test("listen ignores volatile metadata and transient failures, then exits on a cached PR update", async () => {
   let version = 1;
