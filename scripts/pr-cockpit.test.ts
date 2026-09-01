@@ -870,6 +870,40 @@ test("CLI keeps loopback when it is healthy and COCKPIT_URL is set", async () =>
   }
 });
 
+test("CLI accepts a Tailscale HTTPS origin with a non-default port", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-tailnet-port-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "curl"), `#!/usr/bin/env bash
+if [[ "$*" == *"https://hyperion.tail2e89b4.ts.net:8443/api/agent/pr/owner/repo/1"* ]]; then
+  printf 'from-tailnet\\n'
+  exit 0
+fi
+exit 1
+`);
+  chmodSync(join(bin, "curl"), 0o755);
+  try {
+    const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
+      env: {
+        ...Bun.env,
+        HOME: home,
+        PATH: `${bin}:${Bun.env.PATH}`,
+        COCKPIT_ORIGIN: "https://hyperion.tail2e89b4.ts.net:8443",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, error, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect({ output, error, exitCode }).toEqual({ output: "from-tailnet\n", error: "", exitCode: 0 });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("CLI prefers healthy loopback over Service discovery", async () => {
   const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-loopback-service-"));
   const bin = join(home, "bin");
