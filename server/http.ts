@@ -46,6 +46,7 @@ import { lastPollAt, pollOnce, refreshPr, trackedRepos } from "./poller.ts";
 import {
   commitPrFileEdit,
   compactReviewHunks,
+  createPullRequest,
   fetchDiff,
   fetchFileContents,
   fetchFileHistory,
@@ -1221,6 +1222,33 @@ async function handleAgentMutation(owner: string, repo: string, number: string, 
     return json({ id: enqueueMutation({ repo: repoName, number: num, payload }) }, 201);
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+}
+
+async function handleAgentCreatePullRequest(owner: string, repo: string, req: Request): Promise<Response> {
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) return json({ error: "invalid repository" }, 400);
+  const input: unknown = await req.json().catch(() => null);
+  if (!input || typeof input !== "object" || Array.isArray(input)) return json({ error: "invalid pull request" }, 400);
+  try {
+    const head = requiredString(input, "head").trim();
+    const base = requiredString(input, "base").trim();
+    const title = requiredString(input, "title").trim();
+    const body = requiredString(input, "body");
+    const draft = fieldValue(input, "draft");
+    if (!head || !base || !title) throw new Error("head, base, and title cannot be empty");
+    if (draft !== undefined && typeof draft !== "boolean") throw new Error("draft must be a boolean");
+    const repoName = `${owner}/${repo}`;
+    const created = await createPullRequest({ repo: repoName, head, base, title, body, draft: draft === true });
+    if (!isMockGithub) {
+      await refreshPr(repoName, created.number, "user action").catch((error) => {
+        console.error(`created ${repoName}#${created.number}, but cache refresh failed:`, error);
+      });
+    }
+    invalidateInbox();
+    return json(created, 201);
+  } catch (error) {
+    const status = error instanceof GithubRequestError ? error.status : 400;
+    return json({ error: error instanceof Error ? error.message : String(error) }, status);
   }
 }
 
@@ -3071,6 +3099,19 @@ export function buildFetchHandler(port: number, dependencyOverrides: Partial<Htt
       return handleAgentCacheRun(parts[3]!, parts[4]!, parts[5]!, parts[7]!, runtime);
     }
     const trustedCliHost = isTrustedCliHost(req, url.host);
+    if (
+      req.method === "POST" &&
+      parts.length === 6 &&
+      parts[0] === "api" &&
+      parts[1] === "agent" &&
+      parts[2] === "repos" &&
+      parts[5] === "pulls"
+    ) {
+      if (!trustedCliHost || req.headers.get("x-pr-cockpit-cli") !== "1") {
+        return json({ error: "trusted CLI request required" }, 403);
+      }
+      return handleAgentCreatePullRequest(parts[3]!, parts[4]!, req);
+    }
     if (
       req.method === "POST" &&
       parts.length === 7 &&

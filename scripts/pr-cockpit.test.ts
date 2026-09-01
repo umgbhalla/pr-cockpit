@@ -487,6 +487,58 @@ test("update delegates to the running server and waits for the new revision", as
   }
 });
 
+test("create posts an exact pull request through the Cockpit server", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-create-"));
+  const bodyFile = join(home, "body.md");
+  writeFileSync(bodyFile, "Exact multiline body.\n\nSecond paragraph.\n");
+  let received: { url: string; headers: Headers; body: unknown } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      received = { url: request.url, headers: request.headers, body: await request.json() };
+      return Response.json({ number: 7, url: "https://github.com/owner/repo/pull/7" }, { status: 201 });
+    },
+  });
+  try {
+    const child = Bun.spawn([
+      join(import.meta.dir, "pr-cockpit"),
+      "create",
+      "owner/repo",
+      "--head", "feature",
+      "--base", "main",
+      "--title", "Ship feature",
+      "--body-file", bodyFile,
+    ], {
+      env: { ...Bun.env, HOME: home, COCKPIT_ORIGIN: `http://127.0.0.1:${server.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, error, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect({ output, error, exitCode }).toEqual({
+      output: '{"number":7,"url":"https://github.com/owner/repo/pull/7"}\n',
+      error: "",
+      exitCode: 0,
+    });
+    expect(received?.url).toBe(`http://127.0.0.1:${server.port}/api/agent/repos/owner/repo/pulls`);
+    expect(received?.headers.get("x-pr-cockpit-cli")).toBe("1");
+    expect(received?.body).toEqual({
+      head: "feature",
+      base: "main",
+      title: "Ship feature",
+      body: "Exact multiline body.\n\nSecond paragraph.\n",
+      draft: false,
+    });
+  } finally {
+    server.stop(true);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("mutation commands enqueue every PR operation and wait for completion", async () => {
   const root = mkdtempSync(join(tmpdir(), "pr-cockpit-mutations-"));
   const bodyPath = join(root, "body.txt");

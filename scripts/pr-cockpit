@@ -13,6 +13,7 @@ Usage:
   pr-cockpit comment REF --body-file FILE
   pr-cockpit reply REF THREAD --body-file FILE
   pr-cockpit merge REF [--method squash|merge|rebase] [--force]
+  pr-cockpit create REPO --head BRANCH --base BRANCH --title TITLE --body-file FILE [--draft]
   pr-cockpit COMMAND REF [COMMAND_OPTIONS]
   pr-cockpit update
 
@@ -34,6 +35,7 @@ Mutation commands:
   request-reviewers, unrequest-reviewers
 
 Other commands:
+  create REPO          create a pull request through the Cockpit server
   listen [REF]         wait for substantive cached state to change, print it, then exit
   cache-run REF RUN_ID fetch one Actions run and retain its unsuccessful logs
   update               update and reconcile the installed app
@@ -65,6 +67,10 @@ Mutation options:
   --body-file FILE     read exact comment, review, or body text; use - for stdin
   --method METHOD      merge method: squash, merge, or rebase
   --force              bypass Cockpit mergeability gates
+  --head BRANCH        head branch for create
+  --base BRANCH        base branch for create
+  --title TITLE        pull request title for create
+  --draft              create a draft pull request
   --path PATH          inline-comment file path
   --line N             inline-comment ending line
   --side LEFT|RIGHT    inline-comment diff side
@@ -140,7 +146,7 @@ fi
 
 command="read"
 case "${1:-}" in
-  listen|resolve|cache-run|comment|reply|unresolve|review|merge|update-branch|ready-for-review|close|edit-body|edit-title|auto-merge|cockpit-auto-merge|inline-comment|assign|unassign|request-reviewers|unrequest-reviewers)
+  create|listen|resolve|cache-run|comment|reply|unresolve|review|merge|update-branch|ready-for-review|close|edit-body|edit-title|auto-merge|cockpit-auto-merge|inline-comment|assign|unassign|request-reviewers|unrequest-reviewers)
     command="$1"
     shift
     ;;
@@ -168,6 +174,10 @@ comment_line=""
 comment_side=""
 start_line=""
 start_side=""
+create_head=""
+create_base=""
+create_title=""
+create_draft="0"
 positionals=()
 proxy_arg=""
 while (($#)); do
@@ -224,6 +234,22 @@ while (($#)); do
       mutation_method="$1"
       ;;
     --force) force="1" ;;
+    --head)
+      [[ $# -gt 1 ]] || usage
+      shift
+      create_head="$1"
+      ;;
+    --base)
+      [[ $# -gt 1 ]] || usage
+      shift
+      create_base="$1"
+      ;;
+    --title)
+      [[ $# -gt 1 ]] || usage
+      shift
+      create_title="$1"
+      ;;
+    --draft) create_draft="1" ;;
     --path)
       [[ $# -gt 1 ]] || usage
       shift
@@ -269,7 +295,10 @@ done
 
 [[ -z "$since" || "$mode" = "summary" || "$mode" = "json" ]] || usage
 [[ "$comments" = "1" || "$mode" = "summary" || "$mode" = "json" ]] || usage
-if [[ "$command" = "resolve" ]]; then
+[[ "$command" = "create" || ( -z "$create_head" && -z "$create_base" && -z "$create_title" && "$create_draft" = "0" ) ]] || usage
+if [[ "$command" = "create" ]]; then
+  [[ "$ref" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -n "$create_head" && -n "$create_base" && -n "$create_title" && -n "$body_file" && "$mode" = "summary" && -z "$since" && "$comments" = "1" && -z "$mutation_method" && "$force" = "0" && -z "$comment_path" && -z "$comment_line" && -z "$comment_side" && -z "$start_line" && -z "$start_side" && "${#positionals[@]}" -eq 0 ]] || usage
+elif [[ "$command" = "resolve" ]]; then
   [[ -n "$ref" && "$mode" = "summary" && -z "$since" && "$comments" = "1" && "${#positionals[@]}" -eq 1 && "${positionals[0]}" =~ ^[0-9a-f]{10}$ ]] || usage
 elif [[ "$command" = "cache-run" ]]; then
   [[ -n "$ref" && "$mode" = "summary" && -z "$since" && "$comments" = "1" && "${#positionals[@]}" -eq 1 && "${positionals[0]}" =~ ^[1-9][0-9]*$ ]] || usage
@@ -452,6 +481,33 @@ if [[ -n "$proxy" ]] && ! server_ready; then
 fi
 
 api_origin="$(resolve_cockpit_api_origin "$origin_override" "$tailscale_service")" || exit $?
+if [[ "$command" = "create" ]]; then
+  owner="${ref%/*}"
+  name="${ref#*/}"
+  "$bun_bin" -e '
+const [origin, owner, repo, head, base, title, bodyFile, draftText] = process.argv.slice(1);
+const file = Bun.file(bodyFile);
+if (!(await file.exists())) {
+  console.error(`pr-cockpit: body file not found: ${bodyFile}`);
+  process.exit(1);
+}
+const response = await fetch(`${origin}/api/agent/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-pr-cockpit-cli": "1" },
+  body: JSON.stringify({ head, base, title, body: await file.text(), draft: draftText === "1" }),
+}).catch((error) => {
+  console.error(`pr-cockpit: ${error}`);
+  process.exit(1);
+});
+const result = await response.json().catch(() => null);
+if (!response.ok) {
+  console.error(`pr-cockpit: ${result?.error || `create failed (${response.status})`}`);
+  process.exit(1);
+}
+console.log(JSON.stringify(result));
+' "$api_origin" "$owner" "$name" "$create_head" "$create_base" "$create_title" "$body_file" "$create_draft"
+  exit $?
+fi
 json_transform() {
   local operation=$1 argument=${2:-}
   "$bun_bin" -e '
