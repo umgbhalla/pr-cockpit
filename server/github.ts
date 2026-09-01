@@ -1919,23 +1919,6 @@ async function restJson<T>(path: string): Promise<T> {
   return githubRestJson<T>("GET", path);
 }
 
-export async function createPullRequest(input: {
-  repo: string;
-  head: string;
-  base: string;
-  title: string;
-  body: string;
-  draft: boolean;
-}): Promise<{ number: number; url: string }> {
-  if (mockGithub) return { number: 199, url: `https://github.com/${input.repo}/pull/199` };
-  const created = await githubRestJson<{ number: number; html_url: string }>(
-    "POST",
-    `/repos/${encodedRepo(input.repo)}/pulls`,
-    { title: input.title, head: input.head, base: input.base, body: input.body, draft: input.draft },
-  );
-  return { number: created.number, url: created.html_url };
-}
-
 export async function postIssueComment(repo: string, number: number, body: string): Promise<void> {
   await restRequest("POST", `/repos/${repo}/issues/${number}/comments`, { body });
 }
