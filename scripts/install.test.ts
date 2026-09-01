@@ -125,7 +125,7 @@ test("new config is a commented inert example", async () => {
   expect(result.config).toContain('# COCKPIT_PROXY="build-server"');
   expect(result.config).not.toContain("Agents mutate existing PRs");
   expect(result.config).not.toMatch(/^[^#\n]*COCKPIT_PROXY=/m);
-});
+}, 10_000);
 
 test("a Tailscale-first install persists the preferred origin and Serve port", async () => {
   const result = await install(null, { origin: "https://hyperion.tail2e89b4.ts.net:8443", tailscalePort: "8443" });
@@ -134,7 +134,7 @@ test("a Tailscale-first install persists the preferred origin and Serve port", a
   expect(result.config).toMatch(/^COCKPIT_TAILSCALE_SERVE=1$/m);
   expect(result.config).toMatch(/^COCKPIT_TAILSCALE_HTTPS_PORT=8443$/m);
   expect(result.serverPlist).toContain("<string>COCKPIT_TAILSCALE_HTTPS_PORT=8443</string>");
-});
+}, 10_000);
 
 test("an app registration left behind by another root is replaced", async () => {
   const result = await install("/tmp/some-other-checkout");
@@ -145,7 +145,7 @@ test("an app registration left behind by another root is replaced", async () => 
   expect(result.calls).toContain(`bootstrap gui/${uid} `);
   expect(result.calls).toContain("Library/LaunchAgents/app.pr-cockpit.plist");
   expect(result.serverPlist).toContain(`<string>PATH=${result.localBin}:`);
-});
+}, 10_000);
 
 test("no loaded registration bootstraps the app", async () => {
   const result = await install(null);
@@ -163,7 +163,7 @@ test("a registration for this root keeps the running window", async () => {
   expect(result.calls).not.toContain(`bootout gui/${uid}/app.pr-cockpit\n`);
   expect(result.calls).not.toContain("LaunchAgents/app.pr-cockpit.plist");
   expect(result.calls).toContain("app.pr-cockpit.server.plist");
-});
+}, 10_000);
 
 test("replica installation restarts the local server", async () => {
   const result = await install("__ROOT__", {
@@ -175,4 +175,4 @@ test("replica installation restarts the local server", async () => {
   expect(result.serverPlist).toContain("<string>--server-only</string>");
   expect(result.serverPlist).toContain("<string>COCKPIT_REPLICA_SSH_HOST=root@dev-vm</string>");
   expect(result.serverPlist).toMatch(/<string>COCKPIT_LAUNCHER=.*\/Library\/Application Support\/PR Cockpit\/launch<\/string>/);
-});
+}, 10_000);

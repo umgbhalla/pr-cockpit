@@ -1,15 +1,8 @@
 import { setRendererInvalidationPublisher } from "./rendererInvalidation.ts";
-import { servePeerAllowsOrigin, tailscaleWhois } from "./tailscaleServe.ts";
 
 type FetchHandler = (request: Request) => Response | Promise<Response>;
 
 const UNSAFE_BROWSER_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
-
-export type OriginPolicyOptions = {
-  magicDnsSuffix?: string | null;
-  trustServeIdentity?: boolean;
-  whois?: (addr: string) => Promise<boolean>;
-};
 
 function parseAllowedOrigins(configured: string | undefined): Set<string> {
   const origins = new Set<string>();
@@ -45,11 +38,8 @@ export function mergeRendererOrigins(...entries: Array<string | undefined | null
 
 function buildOriginPolicy(
   configured: string | undefined,
-  options: OriginPolicyOptions = {},
-): (request: Request) => boolean | Promise<boolean> {
+): (request: Request) => boolean {
   const allowedOrigins = parseAllowedOrigins(configured);
-  const trustServeIdentity = options.trustServeIdentity === true;
-  const whois = options.whois ?? (trustServeIdentity ? tailscaleWhois : undefined);
   return (request) => {
     const origin = request.headers.get("origin");
     if (origin === null) return request.headers.get("sec-fetch-site") !== "cross-site";
@@ -63,13 +53,12 @@ function buildOriginPolicy(
     } catch {
       return false;
     }
-    if (!trustServeIdentity) return false;
-    return servePeerAllowsOrigin(request, origin, { magicDnsSuffix: options.magicDnsSuffix, whois });
+    return false;
   };
 }
 
-export function startCockpitServer(port: number, fetchHandler: FetchHandler, allowedOrigins?: string, options?: OriginPolicyOptions) {
-  const originAllowed = buildOriginPolicy(allowedOrigins ?? Bun.env.COCKPIT_ALLOWED_ORIGINS, options);
+export function startCockpitServer(port: number, fetchHandler: FetchHandler, allowedOrigins?: string) {
+  const originAllowed = buildOriginPolicy(allowedOrigins ?? Bun.env.COCKPIT_ALLOWED_ORIGINS);
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",

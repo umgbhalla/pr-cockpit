@@ -42,47 +42,6 @@ test("renderer origin policy accepts a configured MagicDNS origin and rejects ot
   }
 });
 
-test("Serve identity is an extra origin path and never trusts Funnel or a mismatched Origin", async () => {
-  const suffix = "tail2e89b4.ts.net";
-  const serviceOrigin = "https://pr-cockpit.tail2e89b4.ts.net";
-  const identity = {
-    "tailscale-headers-info": "v1",
-    "tailscale-user-login": "ada@example.com",
-    "x-forwarded-host": "pr-cockpit.tail2e89b4.ts.net",
-  };
-  const server = startCockpitServer(0, () => new Response("ok"), undefined, {
-    trustServeIdentity: true,
-    magicDnsSuffix: suffix,
-    whois: async (addr) => addr === "100.64.1.2",
-  });
-  try {
-    const baseUrl = `http://127.0.0.1:${server.port}`;
-    expect((await fetch(`${baseUrl}/mutate`, {
-      method: "POST",
-      headers: { origin: serviceOrigin, ...identity },
-    })).ok).toBe(true);
-    expect((await fetch(`${baseUrl}/mutate`, {
-      method: "POST",
-      headers: { origin: "https://evil.example", ...identity },
-    })).status).toBe(403);
-    expect((await fetch(`${baseUrl}/mutate`, {
-      method: "POST",
-      headers: { origin: serviceOrigin, ...identity, "tailscale-funnel-request": "1" },
-    })).status).toBe(403);
-    expect((await fetch(`${baseUrl}/mutate`, {
-      method: "POST",
-      headers: { origin: serviceOrigin, "x-forwarded-for": "100.64.1.2", "x-forwarded-host": "pr-cockpit.tail2e89b4.ts.net" },
-    })).ok).toBe(true);
-    expect((await fetch(`${baseUrl}/mutate`, {
-      method: "POST",
-      headers: { origin: serviceOrigin, "x-forwarded-for": "100.64.9.9", "x-forwarded-host": "pr-cockpit.tail2e89b4.ts.net" },
-    })).status).toBe(403);
-  } finally {
-    server.stop(true);
-    setRendererInvalidationPublisher(() => {});
-  }
-});
-
 test("renderer origins must be exact HTTP or HTTPS origins", () => {
   expect(() => startCockpitServer(0, () => new Response("Not found", { status: 404 }), "https://cockpit.example.net/path")).toThrow(
     "COCKPIT_ALLOWED_ORIGINS entry must be an exact origin",

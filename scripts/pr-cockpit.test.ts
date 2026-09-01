@@ -815,7 +815,6 @@ test("CLI uses COCKPIT_ORIGIN and ignores COCKPIT_URL", async () => {
         ...Bun.env,
         COCKPIT_PORT: String(loopback.port),
         COCKPIT_ORIGIN: `http://127.0.0.1:${remote.port}`,
-        COCKPIT_TAILSCALE_SERVICE: "",
         COCKPIT_URL: `http://127.0.0.1:${loopback.port}`,
       },
       stdout: "pipe",
@@ -851,7 +850,6 @@ test("CLI keeps loopback when it is healthy and COCKPIT_URL is set", async () =>
         ...Bun.env,
         COCKPIT_PORT: String(server.port),
         COCKPIT_ORIGIN: "",
-        COCKPIT_TAILSCALE_SERVICE: "",
         COCKPIT_URL: "https://should-not-be-used.ts.net",
       },
       stdout: "pipe",
@@ -904,54 +902,6 @@ exit 1
   }
 });
 
-test("CLI prefers healthy loopback over Service discovery", async () => {
-  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-loopback-service-"));
-  const bin = join(home, "bin");
-  mkdirSync(bin);
-  const tailscaleLog = join(home, "tailscale-log");
-  writeFileSync(join(bin, "tailscale"), `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> ${JSON.stringify(tailscaleLog)}
-exit 1
-`);
-  chmodSync(join(bin, "tailscale"), 0o755);
-  const server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname === "/healthz") return Response.json({ ok: true });
-      return new Response("from-loopback\n");
-    },
-  });
-  try {
-    const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
-      env: {
-        ...Bun.env,
-        HOME: home,
-        PATH: `${bin}:${Bun.env.PATH}`,
-        COCKPIT_PORT: String(server.port),
-        COCKPIT_ORIGIN: "",
-        COCKPIT_TAILSCALE_SERVICE: "pr-cockpit",
-        COCKPIT_URL: "https://should-not-be-used.ts.net",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [output, error, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    expect(error).toBe("");
-    expect(exitCode).toBe(0);
-    expect(output).toBe("from-loopback\n");
-    expect(existsSync(tailscaleLog) ? readFileSync(tailscaleLog, "utf8") : "").toBe("");
-  } finally {
-    server.stop(true);
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 test("CLI rejects a non-loopback HTTP COCKPIT_ORIGIN", async () => {
   const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
     env: {
@@ -969,61 +919,4 @@ test("CLI rejects a non-loopback HTTP COCKPIT_ORIGIN", async () => {
   ]);
   expect(exitCode).toBe(2);
   expect(error).toContain("COCKPIT_ORIGIN must be http://127.0.0.1[:port] or an https origin");
-});
-
-test("CLI discovers the Tailscale Service origin when loopback is down", async () => {
-  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-service-"));
-  const bin = join(home, "bin");
-  mkdirSync(bin);
-  const curlLog = join(home, "curl-log");
-  writeFileSync(join(bin, "curl"), `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> ${JSON.stringify(curlLog)}
-if [[ "$*" == *healthz* ]]; then
-  exit 1
-fi
-if [[ "$*" == *https://pr-cockpit.tail2e89b4.ts.net* ]]; then
-  printf 'from-service\\n'
-  exit 0
-fi
-exit 1
-`);
-  writeFileSync(join(bin, "tailscale"), `#!/usr/bin/env bash
-if [[ "$1" == "status" && "$2" == "--json" ]]; then
-  printf '%s\\n' '{"Self":{"DNSName":"hyperion.tail2e89b4.ts.net."},"MagicDNSSuffix":"tail2e89b4.ts.net."}'
-  exit 0
-fi
-exit 1
-`);
-  chmodSync(join(bin, "curl"), 0o755);
-  chmodSync(join(bin, "tailscale"), 0o755);
-  try {
-    const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
-      env: {
-        ...Bun.env,
-        HOME: home,
-        PATH: `${bin}:${Bun.env.PATH}`,
-        COCKPIT_PORT: "1",
-        COCKPIT_ORIGIN: "",
-        COCKPIT_TAILSCALE_SERVICE: "svc:pr-cockpit",
-        COCKPIT_URL: "https://should-not-be-used.ts.net",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [output, error, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    expect(error).toBe("");
-    expect(exitCode).toBe(0);
-    expect(output).toBe("from-service\n");
-    const calls = readFileSync(curlLog, "utf8");
-    expect(calls).toContain("https://pr-cockpit.tail2e89b4.ts.net/api/agent/pr/owner/repo/1");
-    expect(calls).not.toContain("should-not-be-used");
-    expect(calls).not.toContain("0.0.0.0");
-    expect(calls).not.toContain("funnel");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
 });

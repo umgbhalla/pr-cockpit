@@ -201,7 +201,6 @@ describe("transactional Linux lifecycle", () => {
     const result = await f.lifecycle(["install", f.source], {
       COCKPIT_TAILSCALE_SERVE: "1",
       COCKPIT_TAILSCALE_HTTPS_PORT: "8443",
-      COCKPIT_TAILSCALE_SERVICE: "pr-cockpit",
     });
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(readFileSync(f.mimeOpsLog, "utf8").trim().split("\n")).toEqual([
@@ -226,7 +225,7 @@ describe("transactional Linux lifecycle", () => {
     expect(statSync(release).mode & 0o777).toBe(0o555);
     expect(statSync(join(release, ".pr-cockpit-release.json")).mode & 0o777).toBe(0o444);
     expect(statSync(join(f.configHome, "pr-cockpit/server.env")).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(f.configHome, "pr-cockpit/server.env"), "utf8")).toContain("COCKPIT_TAILSCALE_SERVE=1\nCOCKPIT_TAILSCALE_HTTPS_PORT=8443\nCOCKPIT_TAILSCALE_SERVICE=\"pr-cockpit\"\n");
+    expect(readFileSync(join(f.configHome, "pr-cockpit/server.env"), "utf8")).toContain("COCKPIT_TAILSCALE_SERVE=1\nCOCKPIT_TAILSCALE_HTTPS_PORT=8443\n");
     expect(statSync(join(f.stateHome, "pr-cockpit/install-manifest.json")).mode & 0o777).toBe(0o600);
     const foregroundEntry = readFileSync(join(f.dataHome, "applications/app.pr-cockpit.desktop"), "utf8");
     expect(foregroundEntry).toContain(`Exec=${join(f.runtimeHome, "pr-cockpit/launch")} %u`);

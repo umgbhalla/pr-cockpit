@@ -49,7 +49,6 @@ env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
 env_origin="${COCKPIT_ORIGIN:-}"
 env_tailscale_serve="${COCKPIT_TAILSCALE_SERVE:-}"
-env_tailscale_service="${COCKPIT_TAILSCALE_SERVICE:-}"
 env_tailscale_https_port="${COCKPIT_TAILSCALE_HTTPS_PORT:-}"
 
 if [[ "$platform" == "Linux" ]]; then
@@ -86,10 +85,6 @@ fi
 tailscale_serve="${env_tailscale_serve:-${COCKPIT_TAILSCALE_SERVE:-}}"
 if [[ -n "$tailscale_serve" ]]; then
   export COCKPIT_TAILSCALE_SERVE="$tailscale_serve"
-fi
-tailscale_service="${env_tailscale_service:-${COCKPIT_TAILSCALE_SERVICE:-}}"
-if [[ -n "$tailscale_service" ]]; then
-  export COCKPIT_TAILSCALE_SERVICE="$tailscale_service"
 fi
 tailscale_https_port="${env_tailscale_https_port:-${COCKPIT_TAILSCALE_HTTPS_PORT:-}}"
 if [[ -n "$tailscale_https_port" ]]; then

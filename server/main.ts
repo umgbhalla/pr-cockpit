@@ -13,7 +13,7 @@ import { installMockNetworkGuard, isMockGithub, seedMockDatabase } from "./mockG
 import { mergeRendererOrigins, startCockpitServer } from "./cockpitServer.ts";
 import { ensureOmpInstalled } from "./commitMessage.ts";
 import { replicaEnabled, startReplicaSync } from "./replica.ts";
-import { startTailscaleServe, startTailscaleService, tailscaleMagicDnsSuffix } from "./tailscaleServe.ts";
+import { startTailscaleServe } from "./tailscaleServe.ts";
 
 const port = Number(Bun.env.COCKPIT_PORT ?? 4820);
 
@@ -31,13 +31,9 @@ try {
   }
 
   const fetchHandler = buildFetchHandler(port);
-  // Serve/Service are opt-in and best-effort; a missing binary or failed advertise must not block loopback.
+  // Serve is opt-in and best-effort; a missing binary or failed publish must not block loopback.
   const serve = await startTailscaleServe(port);
-  const service = await startTailscaleService(port);
-  startCockpitServer(port, fetchHandler, mergeRendererOrigins(Bun.env.COCKPIT_ALLOWED_ORIGINS, serve.origin, service.origin), {
-    magicDnsSuffix: tailscaleMagicDnsSuffix(),
-    trustServeIdentity: Boolean(serve.origin || service.origin),
-  });
+  startCockpitServer(port, fetchHandler, mergeRendererOrigins(Bun.env.COCKPIT_ALLOWED_ORIGINS, serve.origin));
 
   if (!isMockGithub && !replicaEnabled()) {
     startForwarders(port);
@@ -54,11 +50,6 @@ try {
     console.error(`pr-cockpit: Tailscale Serve failed (${serve.error}); loopback server is still running on http://127.0.0.1:${port}`);
   } else if (serve.origin) {
     console.log(`pr-cockpit: Tailscale Serve ${serve.origin} → http://127.0.0.1:${port}`);
-  }
-  if (service.enabled && service.error) {
-    console.error(`pr-cockpit: Tailscale Service failed (${service.error}); loopback server is still running on http://127.0.0.1:${port}`);
-  } else if (service.origin) {
-    console.log(`pr-cockpit: Tailscale Service svc:${service.name} ${service.origin} → http://127.0.0.1:${port}`);
   }
   console.log(`pr-cockpit server listening on http://127.0.0.1:${port} (pid ${process.pid})`);
 } catch (err) {

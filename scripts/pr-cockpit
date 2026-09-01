@@ -286,7 +286,6 @@ env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
 env_origin_set="${COCKPIT_ORIGIN+x}"
 env_origin="${COCKPIT_ORIGIN:-}"
-env_tailscale_service="${COCKPIT_TAILSCALE_SERVICE:-}"
 if [[ -f "$config_file" ]]; then
   # shellcheck disable=SC1090
   source "$config_file"
@@ -298,7 +297,6 @@ if [[ "$env_origin_set" == "x" ]]; then
 else
   origin_override="${COCKPIT_ORIGIN:-}"
 fi
-tailscale_service="${env_tailscale_service:-${COCKPIT_TAILSCALE_SERVICE:-}}"
 if [[ -n "$proxy_arg" ]]; then
   proxy="$proxy_arg"
 elif [[ -n "$env_proxy" ]]; then
@@ -349,17 +347,6 @@ proxy_port="${env_proxy_port:-${COCKPIT_PROXY_PORT:-4820}}"
 bun_bin=$(command -v bun || true)
 [[ -n "$bun_bin" ]] || { echo "pr-cockpit: bun is required" >&2; exit 1; }
 
-normalize_service_name() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  [[ -n "$value" && "$value" != "0" ]] || return 1
-  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
-  value="${value#svc:}"
-  [[ "$value" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || return 1
-  printf '%s\n' "$value"
-}
-
 valid_cockpit_origin() {
   local value="${1%/}"
   [[ "$value" != *0.0.0.0* && "$value" != *funnel* ]] || return 1
@@ -378,26 +365,9 @@ valid_cockpit_origin() {
   return 1
 }
 
-discover_tailscale_service_origin() {
-  local name="$1" json suffix
-  command -v tailscale >/dev/null 2>&1 || return 1
-  json="$(tailscale status --json 2>/dev/null)" || return 1
-  suffix="$(printf '%s' "$json" | "$bun_bin" -e '
-const status = await Bun.stdin.json();
-const raw = String(status.MagicDNSSuffix || status.CurrentTailnet?.MagicDNSSuffix || "").replace(/\.+$/, "").toLowerCase();
-if (raw) { console.log(raw); process.exit(0); }
-const dns = String(status.Self?.DNSName || "").replace(/\.+$/, "").toLowerCase();
-const dot = dns.indexOf(".");
-if (dot > 0) { console.log(dns.slice(dot + 1)); process.exit(0); }
-process.exit(1);
-')" || return 1
-  printf 'https://%s.%s\n' "$name" "$suffix"
-}
-
 resolve_cockpit_api_origin() {
   local override="$1"
-  local service="$2"
-  local origin name
+  local origin
   if [[ -n "$override" ]]; then
     if origin="$(valid_cockpit_origin "$override")"; then
       printf '%s\n' "$origin"
@@ -405,16 +375,6 @@ resolve_cockpit_api_origin() {
     fi
     echo "pr-cockpit: COCKPIT_ORIGIN must be http://127.0.0.1[:port] or an https origin" >&2
     return 2
-  fi
-  if name="$(normalize_service_name "$service")"; then
-    if curl --noproxy '*' --max-time 2 -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-      printf 'http://127.0.0.1:%s\n' "$port"
-      return 0
-    fi
-    if origin="$(discover_tailscale_service_origin "$name")"; then
-      printf '%s\n' "$origin"
-      return 0
-    fi
   fi
   printf 'http://127.0.0.1:%s\n' "$port"
 }
@@ -451,7 +411,7 @@ if [[ -n "$proxy" ]] && ! server_ready; then
   fi
 fi
 
-api_origin="$(resolve_cockpit_api_origin "$origin_override" "$tailscale_service")" || exit $?
+api_origin="$(resolve_cockpit_api_origin "$origin_override")" || exit $?
 json_transform() {
   local operation=$1 argument=${2:-}
   "$bun_bin" -e '
