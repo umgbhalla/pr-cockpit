@@ -336,7 +336,7 @@ normalize_replica_source() {
 }
 if [[ -n "$proxy" ]]; then
   if ! proxy="$(normalize_replica_source "$proxy")"; then
-    echo "pr-cockpit: proxy must be an SSH host such as scape-agent or root@host, or a Tailscale origin such as https://host.ts.net" >&2
+    echo "pr-cockpit: proxy must be an SSH host such as build-server or root@host, or a Tailscale origin such as https://host.ts.net" >&2
     exit 2
   fi
 fi

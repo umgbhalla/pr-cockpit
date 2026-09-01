@@ -2,7 +2,7 @@
 
 **GitHub pull requests at local speed.**
 
-PR Cockpit is a keyboard-first macOS app that keeps pull requests, diffs, threads, checks, and images warm on your Mac. Reads feel immediate, while comments, reviews, edits, and merges sync through your existing `gh` login. GitHub remains the source of truth.
+PR Cockpit is a keyboard-first macOS and Linux app that keeps pull requests, diffs, threads, checks, and images warm on your machine. Reads feel immediate, while comments, reviews, edits, and merges sync through your existing `gh` login. GitHub remains the source of truth.
 
 [Website](https://theolundqvist.github.io/pr-cockpit/) · [Install](#install) · [CLI](#agents-listen-dont-poll) · [Self-host relay](docs/self-host-relay.md) · [Shortcuts](#shortcuts)
 
@@ -10,7 +10,7 @@ PR Cockpit is a keyboard-first macOS app that keeps pull requests, diffs, thread
 
 The local server serves the queue and open pull request from SQLite instead of rebuilding every screen from GitHub. Webhook markers trigger targeted refreshes, WebSocket invalidations update the UI, and a poller repairs missed events.
 
-Warm-cache opens of the large private pull request `scape-app/scape#8132`:
+Warm-cache opens of a large private pull request with 1,879 changed files:
 
 | Product | p50 | p95 | p99 |
 | --- | ---: | ---: | ---: |
@@ -30,7 +30,7 @@ At p99, PR Cockpit painted the same pull request **47× faster than GitHub**. [M
 
 ## Search from anywhere
 
-Press <kbd>⌥⌘K</kbd> from any app, type, <kbd>enter</kbd>. The full pull request opens from the local cache.
+Press <kbd>⌥⌘K</kbd> from any app on macOS. On Linux X11, press <kbd>Super+Alt+K</kbd>; Wayland compositor policy can prevent the global shortcut. The full pull request opens from the local cache.
 
 ![Global pull request search opening a cached pull request](docs/screenshots/landing-search.gif)
 
@@ -97,41 +97,13 @@ pr-cockpit listen owner/repo#123
 
 ## Install
 
+The same bootstrap command installs the native desktop app and `pr-cockpit` CLI on macOS or Linux:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/theolundqvist/pr-cockpit/main/scripts/bootstrap | bash
 ```
 
-The installer checks macOS prerequisites, asks before installing anything, shows each stage, and opens the four-step setup. Only after installation succeeds does it optionally offer to teach local coding assistants to use the cache-aware CLI. Run `pr-cockpit update` to upgrade. A legacy private installation is replaced while local pull-request data and settings are preserved.
-
-### Linux server (private remote access)
-
-From a clone on the Linux host, install the loopback-only systemd user service:
-
-```sh
-./scripts/install-linux
-```
-
-The process always binds `127.0.0.1`. Never bind `0.0.0.0`, open TCP 4820 on a public or LAN interface, or use Tailscale Funnel.
-
-Edit `~/.config/pr-cockpit/server.env`, then run `systemctl --user restart pr-cockpit.service`. To update the checkout and rebuild the UI without replacing that file, run `git pull && ./scripts/install-linux` again.
-
-To publish that loopback port onto your tailnet, opt in with `COCKPIT_TAILSCALE_SERVE=1` in `server.env` (or pass it on first install) and restart. Cockpit runs the equivalent of `tailscale serve --bg --https=443 http://127.0.0.1:$PORT` and adds the node's MagicDNS HTTPS origin (`https://<hostname>.<tailnet>.ts.net`) to the origin allowlist so the event socket and POSTs work. If `tailscale` is missing or Serve fails, the loopback server keeps running and logs the error.
-
-For a name that stays put when the process moves hosts, also set `COCKPIT_TAILSCALE_SERVICE=pr-cockpit` (or `svc:pr-cockpit`). That runs `tailscale serve --service=svc:pr-cockpit --https=443 http://127.0.0.1:$PORT` and auto-allows `https://pr-cockpit.<tailnet>.ts.net`. Service hosts must be tagged (`tag:server`); a user-auth laptop cannot advertise a Service. If advertise fails for that reason, Cockpit logs it clearly and keeps loopback and classic Serve running. Never Funnel, never bind `0.0.0.0`.
-
-When Serve or a Service is publishing, a tailnet peer that arrives with Tailscale identity headers (`Tailscale-User-Login` plus `Tailscale-Headers-Info`) and an `Origin` matching `X-Forwarded-Host` (or this tailnet's MagicDNS suffix) is trusted without a pre-listed origin. Funnel requests are rejected. LocalAPI WhoIs is a best-effort extra path for tagged clients that do not get identity headers; a user-level process often cannot open `tailscaled`'s socket, and that failure is never treated as a successful identify. Other mesh frontends such as Twingate or Cloudflare Access still need each exact browser origin in `COCKPIT_ALLOWED_ORIGINS`.
-
-From another machine, `pr-cockpit` still defaults to `http://127.0.0.1:$PORT`. Set `COCKPIT_ORIGIN=https://pr-cockpit.<tailnet>.ts.net` to talk to the Service (or node Serve) origin, or leave origin unset with `COCKPIT_TAILSCALE_SERVICE` set so the CLI discovers `https://<name>.<suffix>` after loopback health fails. `update` and replica health stay on loopback. Do not use Electron's `COCKPIT_URL` for this.
-
-For SSH access, leave TCP port 4820 closed and tunnel it instead:
-
-```sh
-ssh -N -L 4820:127.0.0.1:4820 user@host
-```
-
-Then open `http://127.0.0.1:4820`. A replica can use the Serve origin instead of SSH: `COCKPIT_PROXY=https://hostname.tailxxxx.ts.net` or `pr-cockpit --use-as-proxy https://hostname.tailxxxx.ts.net`. SSH remains for hosts that are not on the tailnet.
-
-For phone access without Serve, keep the loopback binding and put a mesh VPN in front of it. A VPN whose agent runs on the same host reaches `127.0.0.1:4820` directly, so nothing has to listen on a public address. With Twingate, install a Connector on the host and define a Resource with address `127.0.0.1`, an alias, and TCP restricted to port `4820`. Add each exact browser origin to the comma-separated `COCKPIT_ALLOWED_ORIGINS` value in `server.env` (for example, `COCKPIT_ALLOWED_ORIGINS="http://cockpit.example.internal:4820"`) and restart the service, because unsafe requests and the event socket reject untrusted origins.
+It detects the platform, checks prerequisites, asks before installing anything, shows each stage, and opens the four-step setup. On Linux it installs an immutable release, a user service, desktop entry, tray integration, and the `prcockpit://` handler; X11 is supported directly and Wayland sessions run through XWayland, where global shortcuts are compositor-dependent. Run `pr-cockpit update` to upgrade. On Linux, `$HOME/.pr-cockpit/scripts/uninstall` removes the app and `--purge` also removes local data.
 
 ## Start in four steps
 
@@ -146,7 +118,7 @@ Run **Settings → Run setup again** whenever you want to change repositories or
 
 | Key | Action |
 | --- | --- |
-| <kbd>⌥⌘K</kbd> | Search pull requests from any app |
+| <kbd>⌥⌘K</kbd> macOS<br><kbd>Super+Alt+K</kbd> Linux X11 | Search pull requests globally; Wayland depends on compositor policy |
 | <kbd>j</kbd> / <kbd>k</kbd> | Move |
 | <kbd>enter</kbd> / <kbd>esc</kbd> | Open / back |
 | <kbd>d</kbd> | Conversation / Files |
@@ -167,10 +139,6 @@ Settings live in the app. Optional shell overrides live in `~/.config/pr-cockpit
 | --- | --- |
 | `COCKPIT_REPOS` | Comma-separated `owner/repo` list |
 | `COCKPIT_PORT` | Local HTTP port; defaults to `4820` |
-| `COCKPIT_TAILSCALE_SERVE` | Set to `1` to publish loopback over Tailscale Serve and auto-allow the node MagicDNS origin |
-| `COCKPIT_TAILSCALE_SERVICE` | Service name such as `pr-cockpit`; advertises `svc:<name>` on a tagged host and auto-allows `https://<name>.<tailnet>.ts.net` |
-| `COCKPIT_ORIGIN` | CLI remote origin (`http://127.0.0.1[:port]` or `https://…`); ignored by the Electron shell |
-| `COCKPIT_PROXY` | Replica source: SSH host, or a Tailscale MagicDNS HTTPS origin |
 | `COCKPIT_DEFAULT_REPO` | Repository assumed when a PR number is passed alone |
 | `COCKPIT_REPO_ROOTS` | Paths containing local checkouts |
 | `COCKPIT_RELAY_URL` | [Self-hosted webhook relay](docs/self-host-relay.md) |

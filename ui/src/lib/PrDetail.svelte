@@ -93,7 +93,7 @@
   let sinceAnchor = $state(null);
   let rewriteFallback = $state(false);
   let churnBaseRef = $state(null);
-  let diffState = $state("ready");
+  let diffState = $state("idle");
   let diffNonce = $state(0);
   let pendingCommit = $state(null);
   let localBranchBusy = $state(false);
@@ -144,7 +144,7 @@
     collapsedFiles = new Set();
     viewedFiles = new Set();
     rangeKey = "all";
-    diffState = "ready";
+    diffState = "idle";
     rewriteFallback = false;
     churnBaseRef = null;
     mergeConfirm = false;
@@ -255,6 +255,7 @@
     const dkey = `${baseKey}#${diffNonce}`;
     if (dkey === loadedDiffKey) return;
     loadedDiffKey = dkey;
+    diffState = "building";
     const token = {};
     diffFetch = token;
     const controller = new AbortController();
@@ -1623,7 +1624,7 @@
   }
 
   function viewedFileStorageKey() {
-    return `${VIEWED_FILES_KEY_PREFIX}${repo}#${number}`;
+    return `${VIEWED_FILES_KEY_PREFIX}${repo}#${number}${rangeKey === "all" ? "" : `:${rangeKey}`}`;
   }
 
   function loadViewedFileRecords() {
@@ -1647,11 +1648,6 @@
   function syncViewedFiles(nextFiles) {
     const nextCollapsed = new Set(collapsedFiles);
     for (const path of viewedFiles) nextCollapsed.delete(path);
-    if (rangeKey !== "all") {
-      viewedFiles = new Set();
-      collapsedFiles = nextCollapsed;
-      return;
-    }
 
     const records = loadViewedFileRecords();
     const nextViewed = new Set();
@@ -1688,7 +1684,6 @@
     viewedFiles = nextViewed;
     collapsedFiles = nextCollapsed;
 
-    if (rangeKey !== "all") return;
     const records = loadViewedFileRecords();
     for (const file of targetFiles) {
       if (viewed) records[file.path] = { fingerprint: fileDiffFingerprint(file) };
@@ -2484,7 +2479,7 @@
           Conversation {#if tab === "files"}<Kbd keys="d" />{/if}
         </a>
         <a class="tab" class:active={tab === "files"} href="#/pr/{repo}/{number}/files">
-          Files {#if diffState === "ready"}<span class="tab-count">{treeFiles.length}</span>{/if} {#if tab !== "files"}<Kbd keys="d" />{/if}
+          Files {#if pr.changedFiles > 0}<span class="tab-count">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if} {#if tab !== "files"}<Kbd keys="d" />{/if}
         </a>
         <a class="tab" class:active={tab === "agents"} href="#/pr/{repo}/{number}/agents" onclick={(event) => guardTabNavigation(event, "agents")}>
           Agents {#if agent?.state === "running"}<span class="tab-count">1</span>{/if} {#if tab !== "agents"}<Kbd keys="⌘3" />{/if}
@@ -2520,7 +2515,7 @@
           <aside class="tree-pane">
             <div class="file-nav-head">
               <span>Changed files</span>
-              {#if diffState === "ready"}<span class="fcount">{treeFiles.length}</span>{/if}
+              {#if pr.changedFiles > 0}<span class="fcount">{diffState === "ready" ? treeFiles.length : pr.changedFiles}</span>{/if}
             </div>
             <FileTree files={treeFiles} {selectedPath} hoveredPath={hoveredDiffPath} onSelect={selectFileByPath} />
           </aside>
@@ -5659,7 +5654,6 @@
     }
   }
 
-  /* Scape Desktop visual language: the PR is the surface, not a stack of cards. */
   .page {
     padding: 0 32px 88px;
   }

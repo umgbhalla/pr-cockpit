@@ -1,5 +1,6 @@
 import { getSetting, setSetting } from "./db.ts";
 import { detectHarness, normalizeHarness, type Harness } from "./harness.ts";
+import desktopShortcuts from "../shared/desktopShortcuts.json";
 
 const POLL_INTERVAL_FLOOR_S = 60;
 const DEFAULT_POLL_INTERVAL_S = 180;
@@ -180,9 +181,15 @@ export function seedSettings(): void {
     }));
     setSetting("agents", JSON.stringify(migrated));
   }
-  if (getSetting("keybind_open_app") === null) setSetting("keybind_open_app", "Command+Control+G");
-  if (getSetting("keybind_open_palette") === null) setSetting("keybind_open_palette", "Command+Option+K");
-  if (getSetting("keybind_open_palette") === "Option+K") setSetting("keybind_open_palette", "Command+Option+K");
+  if (getSetting("keybind_platform_defaults_migrated") !== "true") {
+    const openApp = getSetting("keybind_open_app");
+    const openPalette = getSetting("keybind_open_palette");
+    if (openApp === null || openApp === desktopShortcuts.darwin.openApp) setSetting("keybind_open_app", "");
+    if (openPalette === null || openPalette === desktopShortcuts.darwin.openPalette || openPalette === "Option+K") {
+      setSetting("keybind_open_palette", "");
+    }
+    setSetting("keybind_platform_defaults_migrated", "true");
+  }
   if (getSetting("saved_views") === null) setSetting("saved_views", "[]");
   if (getSetting("repo_roots") === null) setSetting("repo_roots", envRepoRoots);
   if (getSetting("cockpit_webhooks") === null) setSetting("cockpit_webhooks", "false");
@@ -222,6 +229,7 @@ export function pollIntervalMs(): number {
 }
 
 export interface Settings {
+  desktop_platform: string;
   repos: string;
   default_repo: string;
   poll_interval_s: number;
@@ -256,6 +264,7 @@ export interface Settings {
 export function readSettings(): Settings {
   const storedReplicaSshHost = getSetting("replica_ssh_host");
   return {
+    desktop_platform: process.platform,
     repos: getSetting("repos") ?? envRepos,
     default_repo: getSetting("default_repo") ?? "",
     poll_interval_s: clampInterval(Number(getSetting("poll_interval_s"))),
@@ -280,8 +289,8 @@ export function readSettings(): Settings {
     force_merge_repos: getSetting("force_merge_repos") ?? "",
     review_bots: getSetting("review_bots") ?? envReviewBots,
     agents: agentSettings(),
-    keybind_open_app: getSetting("keybind_open_app") ?? "Command+Control+G",
-    keybind_open_palette: getSetting("keybind_open_palette") ?? "Command+Option+K",
+    keybind_open_app: getSetting("keybind_open_app") ?? "",
+    keybind_open_palette: getSetting("keybind_open_palette") ?? "",
     saved_views: getSetting("saved_views") ?? "[]",
     repo_roots: getSetting("repo_roots") ?? envRepoRoots,
     cockpit_webhooks: getSetting("cockpit_webhooks") === "true",
