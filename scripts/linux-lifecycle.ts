@@ -621,6 +621,7 @@ function installConfig(): void {
   if (process.env.COCKPIT_REPOS) lines.push(`COCKPIT_REPOS=${quoteEnv(process.env.COCKPIT_REPOS)}`);
   if (process.env.COCKPIT_ALLOWED_ORIGINS) lines.push(`COCKPIT_ALLOWED_ORIGINS=${quoteEnv(process.env.COCKPIT_ALLOWED_ORIGINS)}`);
   if (process.env.COCKPIT_TAILSCALE_SERVE === "1") lines.push("COCKPIT_TAILSCALE_SERVE=1");
+  if (process.env.COCKPIT_TAILSCALE_HTTPS_PORT) lines.push(`COCKPIT_TAILSCALE_HTTPS_PORT=${process.env.COCKPIT_TAILSCALE_HTTPS_PORT}`);
   if (process.env.COCKPIT_TAILSCALE_SERVICE && process.env.COCKPIT_TAILSCALE_SERVICE !== "0") lines.push(`COCKPIT_TAILSCALE_SERVICE=${quoteEnv(process.env.COCKPIT_TAILSCALE_SERVICE)}`);
   atomicFile(envFile, `${lines.join("\n")}\n`, 0o600);
 }

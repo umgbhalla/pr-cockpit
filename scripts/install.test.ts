@@ -64,7 +64,7 @@ exit 0`,
 
 async function install(
   loadedRoot: string | null,
-  options: { platform?: "Darwin" | "Linux"; proxy?: string; healthRoot?: string } = {},
+  options: { platform?: "Darwin" | "Linux"; proxy?: string; healthRoot?: string; origin?: string; tailscalePort?: string } = {},
 ) {
   const home = mkdtempSync(join(tmpdir(), "cockpit-install-"));
   try {
@@ -76,6 +76,11 @@ async function install(
         HOME: installHome,
         COCKPIT_PORT: "4820",
         ...(options.proxy ? { COCKPIT_PROXY: options.proxy } : {}),
+        ...(options.origin ? {
+          COCKPIT_ORIGIN: options.origin,
+          COCKPIT_TAILSCALE_SERVE: "1",
+          COCKPIT_TAILSCALE_HTTPS_PORT: options.tailscalePort ?? "443",
+        } : {}),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -122,6 +127,15 @@ test("new config is a commented inert example", async () => {
   expect(result.config).not.toMatch(/^[^#\n]*COCKPIT_PROXY=/m);
 });
 
+test("a Tailscale-first install persists the preferred origin and Serve port", async () => {
+  const result = await install(null, { origin: "https://hyperion.tail2e89b4.ts.net:8443", tailscalePort: "8443" });
+  expect(result.exitCode).toBe(0);
+  expect(result.config).toMatch(/^COCKPIT_ORIGIN=https:\/\/hyperion\.tail2e89b4\.ts\.net:8443$/m);
+  expect(result.config).toMatch(/^COCKPIT_TAILSCALE_SERVE=1$/m);
+  expect(result.config).toMatch(/^COCKPIT_TAILSCALE_HTTPS_PORT=8443$/m);
+  expect(result.serverPlist).toContain("<string>COCKPIT_TAILSCALE_HTTPS_PORT=8443</string>");
+});
+
 test("an app registration left behind by another root is replaced", async () => {
   const result = await install("/tmp/some-other-checkout");
   expect(result.exitCode).toBe(0);
@@ -139,7 +153,7 @@ test("no loaded registration bootstraps the app", async () => {
   expect(result.stdout).not.toContain("replacing the app registration");
   expect(result.calls).not.toContain(`bootout gui/${uid}/app.pr-cockpit\n`);
   expect(result.calls).toContain("Library/LaunchAgents/app.pr-cockpit.plist");
-});
+}, 10_000);
 
 test("a registration for this root keeps the running window", async () => {
   const result = await install("__ROOT__");

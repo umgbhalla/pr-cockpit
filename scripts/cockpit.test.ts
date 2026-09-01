@@ -46,6 +46,7 @@ describe("Linux desktop launcher", () => {
         ...Bun.env,
         DISPLAY: ":99",
         COCKPIT_PORT: "4820",
+        COCKPIT_ORIGIN: "https://hyperion.tail2e89b4.ts.net:8443",
         HOME: fixture,
         PATH: `${bin}:${Bun.env.PATH}`,
         XDG_DATA_HOME: dataHome,
@@ -59,7 +60,7 @@ describe("Linux desktop launcher", () => {
     expect(result.stdout.toString().trim().split("\n")).toEqual([
       join(runtime, "scripts", "cockpit"),
       join(runtime, "shell"),
-      "--cockpit-url=http://127.0.0.1:4820",
+      "--cockpit-url=https://hyperion.tail2e89b4.ts.net:8443",
       protocolUrl,
     ]);
   });
