@@ -730,6 +730,25 @@ describe("agent PR summary", () => {
     expect(await accepted.json()).toHaveProperty("id");
   });
 
+  test("requires a trusted CLI and validates create-PR input", async () => {
+    const handler = buildFetchHandler(4820);
+    const url = "http://127.0.0.1:4820/api/agent/repos/cockpit-test/create-route/pulls";
+    const denied = await handler(new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ head: "feature", base: "main", title: "Title", body: "" }),
+    }));
+    expect(denied.status).toBe(403);
+
+    const invalid = await handler(new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-pr-cockpit-cli": "1" },
+      body: JSON.stringify({ head: "", base: "main", title: "Title", body: "" }),
+    }));
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: "head, base, and title cannot be empty" });
+  });
+
   test("recomputes tracked PR rank when resolution refresh fails", async () => {
     const repo = "cockpit-test/thread-rank";
     const number = 987654326;

@@ -14,11 +14,11 @@
   import { prefs } from "./prefs.svelte.js";
   import { isTypingTarget, shouldCopyPrUrl } from "./dom.js";
   import { scrollEdge } from "./scroll.js";
-  import KeyBar from "./KeyBar.svelte";
   import Avatar from "./Avatar.svelte";
   import UpdateButton from "./UpdateButton.svelte";
   import { timedFlag } from "./timedFlag.svelte.js";
   import { prKey } from "./prKey.js";
+  import { availableRepositories, filterByRepository } from "./repoFilter.js";
   import { showFlash } from "./flash.svelte.js";
   import CurrentBranchBadge from "./CurrentBranchBadge.svelte";
   import Kbd from "./Kbd.svelte";
@@ -70,6 +70,8 @@
   let undo = $state(null);
   const archiveFlash = timedFlag(4000, () => (undo = null));
   let savedViews = $state([]);
+  let configuredRepos = $state([]);
+  let repoFilter = $state("");
   let pollIntervalS = $state(180);
   const inboxMountedAt = Date.now();
 
@@ -77,9 +79,11 @@
     try {
       const settings = await fetchSettings();
       savedViews = JSON.parse(settings.saved_views || "[]");
+      configuredRepos = settings.repos.split(",").map((repo) => repo.trim()).filter(Boolean);
       pollIntervalS = Number.isFinite(settings.poll_interval_s) ? settings.poll_interval_s : 180;
     } catch {
       savedViews = [];
+      configuredRepos = [];
     }
   }
 
@@ -318,7 +322,9 @@
   });
 
   let historyActive = $derived(wantsHistory(filterQuery) && historyQuery === filterQuery.trim() && !historyLoading);
-  let filteredPrs = $derived(wantsHistory(filterQuery) ? (historyQuery === filterQuery.trim() ? historyPrs : []) : filterPrs(prs, filterQuery, showArchived));
+  let queryFilteredPrs = $derived(wantsHistory(filterQuery) ? (historyQuery === filterQuery.trim() ? historyPrs : []) : filterPrs(prs, filterQuery, showArchived));
+  let availableRepos = $derived(availableRepositories(configuredRepos, prs, archivedPrs, closedPrs));
+  let filteredPrs = $derived(filterByRepository(queryFilteredPrs, repoFilter));
   let activeView = $derived(savedViews.find((v) => v.query === filterQuery.trim())?.name ?? null);
 
   // history views can't be counted from the open inbox; show the live count only while applied, else a placeholder
@@ -510,33 +516,6 @@
 
   $effect(() => {
     if (selected > ordered.length - 1) selected = Math.max(0, ordered.length - 1);
-  });
-
-  let keyBarKeys = $derived.by(() => {
-    const pr = ordered[selected];
-    const keys = [
-      { key: "j / k", label: "move" },
-      { key: "⏎", label: "open" },
-    ];
-    if (view === "closed") {
-      keys.push({ key: "o", label: "github" });
-      keys.push({ key: "C", label: "back to open" });
-      return keys;
-    }
-    if (pr) keys.push({ key: "e", label: isArchived(pr) ? "unarchive" : "archive" });
-    keys.push({ key: "A", label: showArchived ? "hide archived" : "archived" });
-    keys.push({ key: "C", label: "recently merged" });
-    if (pr) {
-      for (const a of keybindAgents) {
-        if (a.id === "fixer") continue;
-        if (a.id === "autofix") keys.push({ key: a.keybind, label: multiRange ? "autofix selected" : "autofix" });
-        else if (a.id === "rescorer") keys.push({ key: a.keybind, label: "re-score" });
-        else if (pr.fixerAgentState !== "running") keys.push({ key: a.keybind, label: a.name || "custom agent" });
-      }
-    }
-    keys.push({ key: "⇧J / ⇧K", label: "select range" });
-    keys.push({ key: "o", label: "github" });
-    return keys;
   });
 
   function scrollSelectedIntoView() {
@@ -764,16 +743,27 @@
     </header>
 
 
-    <div class="view-tabs" role="tablist" aria-label="List view">
-      <button class="view-tab" role="tab" aria-selected={view === "open"} class:active={view === "open"} onclick={() => showView("open")}>
-        Open
-        <span class="view-tab-count">{prs.length}</span>
-        {#if view === "closed"}<Kbd keys="tab" />{/if}
-      </button>
-      <button class="view-tab" role="tab" aria-selected={view === "closed"} class:active={view === "closed"} onclick={() => showView("closed")}>
-        Recently merged {#if view === "open"}<Kbd keys="tab" />{/if}
-      </button>
-      <a class="view-tab" role="tab" aria-selected="false" href="#/actions">Actions</a>
+    <div class="queue-toolbar">
+      <div class="view-tabs" role="tablist" aria-label="List view">
+        <button class="view-tab" role="tab" aria-selected={view === "open"} class:active={view === "open"} onclick={() => showView("open")}>
+          Open
+          <span class="view-tab-count">{prs.length}</span>
+          {#if view === "closed"}<Kbd keys="tab" />{/if}
+        </button>
+        <button class="view-tab" role="tab" aria-selected={view === "closed"} class:active={view === "closed"} onclick={() => showView("closed")}>
+          Recently merged {#if view === "open"}<Kbd keys="tab" />{/if}
+        </button>
+        <a class="view-tab" role="tab" aria-selected="false" href="#/actions">Actions</a>
+      </div>
+      <label class="repo-filter">
+        <span class="sr-only">Repository</span>
+        <select bind:value={repoFilter} onchange={() => (selected = 0)} aria-label="Filter by repository">
+          <option value="">All repositories</option>
+          {#each availableRepos as repo}
+            <option value={repo}>{repo}</option>
+          {/each}
+        </select>
+      </label>
     </div>
 
     {#if filterOpen && view === "open"}
@@ -932,7 +922,7 @@
       </a>
     {/snippet}
 
-    <div class="inbox-layout">
+    <div class="inbox-layout" class:empty-layout={view === "open" && loaded && !error && !syncing && prs.length === 0}>
       <div class="queue-list">
         {#if view === "closed"}
           {#if !closedLoaded}
@@ -1062,8 +1052,6 @@
   <div class="copied-flash">Archived — <kbd>z</kbd> to undo</div>
 {:else if bulkAutofixFlash.value}
   <div class="copied-flash">{bulkAutofixFlash.value}</div>
-{:else}
-  <KeyBar keys={keyBarKeys} />
 {/if}
 
 <style>
@@ -1537,12 +1525,31 @@
   .view-tabs {
     display: flex;
     gap: 4px;
-    margin: 0 0 16px;
+    margin: 0;
     padding: 3px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-xs);
+  }
+  .queue-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .repo-filter {
+    margin-left: auto;
+  }
+  .repo-filter select {
+    min-height: 36px;
+    max-width: 280px;
+    padding: 0 34px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    color: var(--text);
+    font: 12px var(--sans);
   }
   .view-tab {
     display: flex;
@@ -1593,6 +1600,24 @@
     grid-template-columns: minmax(0, 1fr) 236px;
     align-items: start;
     gap: 20px;
+  }
+  .inbox-layout.empty-layout {
+    grid-template-columns: minmax(0, 640px);
+    justify-content: center;
+    gap: 8px;
+    padding-top: clamp(24px, 8vh, 88px);
+  }
+  .empty-layout .empty {
+    min-height: 120px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    font-size: 14px;
+  }
+  .empty-layout .queue-sidecar {
+    position: static;
+    width: min(100%, 420px);
+    margin: 0 auto;
   }
   .queue-list {
     min-width: 0;
@@ -1882,6 +1907,17 @@
     }
     .queue-sidecar {
       grid-template-columns: 1fr;
+    }
+    .queue-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .repo-filter {
+      margin-left: 0;
+    }
+    .repo-filter select {
+      width: 100%;
+      max-width: none;
     }
     .row-badge-slot {
       display: none;

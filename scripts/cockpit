@@ -47,8 +47,10 @@ env_relay_url="${COCKPIT_RELAY_URL:-}"
 env_review_bots="${COCKPIT_REVIEW_BOTS:-}"
 env_proxy="${COCKPIT_PROXY:-}"
 env_proxy_port="${COCKPIT_PROXY_PORT:-}"
+env_origin="${COCKPIT_ORIGIN:-}"
 env_tailscale_serve="${COCKPIT_TAILSCALE_SERVE:-}"
 env_tailscale_service="${COCKPIT_TAILSCALE_SERVICE:-}"
+env_tailscale_https_port="${COCKPIT_TAILSCALE_HTTPS_PORT:-}"
 
 if [[ "$platform" == "Linux" ]]; then
   config_file="${XDG_CONFIG_HOME:-$HOME/.config}/pr-cockpit/config"
@@ -88,6 +90,16 @@ fi
 tailscale_service="${env_tailscale_service:-${COCKPIT_TAILSCALE_SERVICE:-}}"
 if [[ -n "$tailscale_service" ]]; then
   export COCKPIT_TAILSCALE_SERVICE="$tailscale_service"
+fi
+tailscale_https_port="${env_tailscale_https_port:-${COCKPIT_TAILSCALE_HTTPS_PORT:-}}"
+if [[ -n "$tailscale_https_port" ]]; then
+  export COCKPIT_TAILSCALE_HTTPS_PORT="$tailscale_https_port"
+fi
+origin="${env_origin:-${COCKPIT_ORIGIN:-}}"
+origin="${origin%/}"
+if [[ -n "$origin" && ! "$origin" =~ ^https://[A-Za-z0-9._-]+(:[0-9]+)?$ && ! "$origin" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?$ ]]; then
+  echo "pr-cockpit: COCKPIT_ORIGIN must be a loopback HTTP or HTTPS origin" >&2
+  exit 2
 fi
 default_repo="${env_default_repo:-${COCKPIT_DEFAULT_REPO:-}}"
 
@@ -196,7 +208,7 @@ if [[ "$platform" == "Darwin" && "${COCKPIT_SKIP_RECONCILE:-0}" != "1" && "$serv
 fi
 
 pr_arg="$(echo "$pr_arg" | xargs)"
-target_url="$url"
+target_url="${origin:-$url}"
 if [[ -n "$pr_arg" ]]; then
   if [[ "$pr_arg" == */*#* ]]; then
     repo="${pr_arg%#*}"

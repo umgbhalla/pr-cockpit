@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mergeRendererOrigins, startCockpitServer } from "./cockpitServer.ts";
 import {
+  conflictingServeRoute,
   isTrustedCliHost,
   magicDnsHttpsOrigin,
   magicDnsSuffixFromStatus,
@@ -15,6 +16,7 @@ import {
   tailscaleServeArgs,
   tailscaleServeEnabled,
   tailscaleServeStatus,
+  tailscaleHttpsPort,
   tailscaleServiceArgs,
   tailscaleServiceOrigin,
   tailscaleServiceStatus,
@@ -30,6 +32,9 @@ afterEach(() => {
 function fakeTailscale(commands: string[][]): (args: readonly string[]) => Promise<TailscaleCommandResult> {
   return async (args) => {
     commands.push([...args]);
+    if (args[0] === "serve" && args[1] === "status" && args[2] === "--json") {
+      return { exitCode: 0, stdout: JSON.stringify({ Web: {} }), stderr: "" };
+    }
     if (args[0] === "serve" && typeof args[1] === "string" && args[1].startsWith("--service=")) {
       return { exitCode: 0, stdout: "", stderr: "" };
     }
@@ -57,14 +62,43 @@ test("Tailscale Serve is off unless COCKPIT_TAILSCALE_SERVE=1", () => {
 
 test("Serve command publishes HTTPS 443 to loopback and never uses Funnel", () => {
   expect(tailscaleServeArgs(4820)).toEqual(["serve", "--bg", "--https=443", "http://127.0.0.1:4820"]);
+  expect(tailscaleServeArgs(4820, 8443)).toEqual(["serve", "--bg", "--https=8443", "http://127.0.0.1:4820"]);
   expect(tailscaleServeArgs(4820).join(" ")).not.toContain("funnel");
+  expect(tailscaleHttpsPort(undefined)).toBe(443);
+  expect(tailscaleHttpsPort("8443")).toBe(8443);
+  expect(() => tailscaleHttpsPort("0")).toThrow("not a valid port");
 });
 
 test("MagicDNS origin strips the trailing FQDN dot", () => {
   expect(magicDnsHttpsOrigin(JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }))).toBe(
     "https://hyperion.tail2e89b4.ts.net",
   );
+  expect(magicDnsHttpsOrigin(JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }), 8443)).toBe(
+    "https://hyperion.tail2e89b4.ts.net:8443",
+  );
   expect(() => magicDnsHttpsOrigin("{}")).toThrow("Tailscale did not report a MagicDNS name");
+});
+
+test("Serve refuses to replace another root route", async () => {
+  const commands: string[][] = [];
+  const proxy = "http://127.0.0.1:4820";
+  const config = JSON.stringify({
+    Web: { "hyperion.tail2e89b4.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } } } },
+  });
+  expect(conflictingServeRoute(config, "https://hyperion.tail2e89b4.ts.net:8443", 8443, proxy)).toContain("already routes /");
+  const status = await startTailscaleServe(4820, {
+    enabled: true,
+    httpsPort: 8443,
+    which: () => "/usr/bin/tailscale",
+    run: async (args) => {
+      commands.push([...args]);
+      if (args[0] === "status") return { exitCode: 0, stdout: JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }), stderr: "" };
+      if (args[0] === "serve" && args[1] === "status") return { exitCode: 0, stdout: config, stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    },
+  });
+  expect(status.error).toContain("already routes /");
+  expect(commands).toEqual([["status", "--json"], ["serve", "status", "--json"]]);
 });
 
 test("startTailscaleServe records the MagicDNS origin after a successful serve", async () => {
@@ -78,10 +112,11 @@ test("startTailscaleServe records the MagicDNS origin after a successful serve",
     enabled: true,
     origin: "https://hyperion.tail2e89b4.ts.net",
     proxy: "http://127.0.0.1:4820",
+    httpsPort: 443,
     error: null,
   });
   expect(tailscaleServeStatus()).toEqual(status);
-  expect(commands[0]).toEqual(["serve", "--bg", "--https=443", "http://127.0.0.1:4820"]);
+  expect(commands.at(-1)).toEqual(["serve", "--bg", "--https=443", "http://127.0.0.1:4820"]);
   expect(commands.some((args) => args.includes("funnel"))).toBe(false);
 });
 
@@ -90,6 +125,7 @@ test("missing tailscale or a failed serve leaves the origin unset", async () => 
     enabled: true,
     origin: null,
     proxy: "http://127.0.0.1:4820",
+    httpsPort: 443,
     error: "`tailscale` is not on PATH",
   });
   expect(await startTailscaleServe(4820, {
@@ -100,12 +136,14 @@ test("missing tailscale or a failed serve leaves the origin unset", async () => 
     enabled: true,
     origin: null,
     proxy: "http://127.0.0.1:4820",
+    httpsPort: 443,
     error: "failed to connect to local tailscaled",
   });
   expect(await startTailscaleServe(4820, { enabled: false, which: () => "/usr/bin/tailscale" })).toEqual({
     enabled: false,
     origin: null,
     proxy: null,
+    httpsPort: null,
     error: null,
   });
 });
@@ -133,6 +171,10 @@ test("a mock server with Serve enabled still binds loopback and allows the Magic
   writeFileSync(join(bin, "tailscale"), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> ${JSON.stringify(join(root, "tailscale-calls"))}
+if [[ "$1" == "serve" && "$2" == "status" && "$3" == "--json" ]]; then
+  printf '%s\\n' '{"Web":{}}'
+  exit 0
+fi
 if [[ "$1" == "serve" && "$2" == "--bg" ]]; then
   [[ "$*" != *funnel* ]]
   [[ "$*" == *"--https=443 http://127.0.0.1:${port}"* ]]
@@ -173,12 +215,13 @@ exit 1
         const response = await fetch(`http://127.0.0.1:${port}/healthz`);
         if (response.ok) {
           const body = await response.json() as {
-            tailscaleServe?: { origin: string; proxy: string; error: string | null };
+            tailscaleServe?: { origin: string; proxy: string; httpsPort: number; error: string | null };
           };
           expect(body.tailscaleServe).toEqual({
             enabled: true,
             origin: "https://hyperion.tail2e89b4.ts.net",
             proxy: `http://127.0.0.1:${port}`,
+            httpsPort: 443,
             error: null,
           });
           expect((await fetch(`http://127.0.0.1:${port}/mutate`, {
@@ -287,6 +330,7 @@ test("an untagged Service advertise keeps classic Serve and loopback working", a
   const commands: string[][] = [];
   const run: (args: readonly string[]) => Promise<TailscaleCommandResult> = async (args) => {
     commands.push([...args]);
+    if (args[0] === "serve" && args[1] === "status") return { exitCode: 0, stdout: JSON.stringify({ Web: {} }), stderr: "" };
     if (args[0] === "serve" && args[1] === "--bg") return { exitCode: 0, stdout: "", stderr: "" };
     if (args[0] === "serve" && typeof args[1] === "string" && args[1].startsWith("--service=")) {
       return { exitCode: 1, stdout: "", stderr: "backend error: service hosts must be tagged nodes\n" };
@@ -306,6 +350,7 @@ test("an untagged Service advertise keeps classic Serve and loopback working", a
     enabled: true,
     origin: "https://hyperion.tail2e89b4.ts.net",
     proxy: "http://127.0.0.1:4820",
+    httpsPort: 443,
     error: null,
   });
   expect(tailscaleServeStatus()).toEqual(serve);
@@ -407,6 +452,10 @@ test("a mock server keeps loopback and classic Serve when Service advertise is u
   writeFileSync(join(bin, "tailscale"), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> ${JSON.stringify(join(root, "tailscale-calls"))}
+if [[ "$1" == "serve" && "$2" == "status" && "$3" == "--json" ]]; then
+  printf '%s\\n' '{"Web":{}}'
+  exit 0
+fi
 if [[ "$1" == "serve" && "$2" == "--bg" ]]; then
   [[ "$*" != *funnel* ]]
   [[ "$*" == *"--https=443 http://127.0.0.1:${port}"* ]]
@@ -452,13 +501,14 @@ exit 1
         const response = await fetch(`http://127.0.0.1:${port}/healthz`);
         if (response.ok) {
           const body = await response.json() as {
-            tailscaleServe?: { origin: string; proxy: string; error: string | null };
+            tailscaleServe?: { origin: string; proxy: string; httpsPort: number; error: string | null };
             tailscaleService?: { name: string; origin: string | null; error: string | null };
           };
           expect(body.tailscaleServe).toEqual({
             enabled: true,
             origin: "https://hyperion.tail2e89b4.ts.net",
             proxy: `http://127.0.0.1:${port}`,
+            httpsPort: 443,
             error: null,
           });
           expect(body.tailscaleService?.name).toBe("pr-cockpit");

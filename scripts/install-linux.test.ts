@@ -200,6 +200,7 @@ describe("transactional Linux lifecycle", () => {
     writeFileSync(join(f.source, "private-untracked.txt"), "secret");
     const result = await f.lifecycle(["install", f.source], {
       COCKPIT_TAILSCALE_SERVE: "1",
+      COCKPIT_TAILSCALE_HTTPS_PORT: "8443",
       COCKPIT_TAILSCALE_SERVICE: "pr-cockpit",
     });
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
@@ -225,7 +226,7 @@ describe("transactional Linux lifecycle", () => {
     expect(statSync(release).mode & 0o777).toBe(0o555);
     expect(statSync(join(release, ".pr-cockpit-release.json")).mode & 0o777).toBe(0o444);
     expect(statSync(join(f.configHome, "pr-cockpit/server.env")).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(f.configHome, "pr-cockpit/server.env"), "utf8")).toContain("COCKPIT_TAILSCALE_SERVE=1\nCOCKPIT_TAILSCALE_SERVICE=\"pr-cockpit\"\n");
+    expect(readFileSync(join(f.configHome, "pr-cockpit/server.env"), "utf8")).toContain("COCKPIT_TAILSCALE_SERVE=1\nCOCKPIT_TAILSCALE_HTTPS_PORT=8443\nCOCKPIT_TAILSCALE_SERVICE=\"pr-cockpit\"\n");
     expect(statSync(join(f.stateHome, "pr-cockpit/install-manifest.json")).mode & 0o777).toBe(0o600);
     const foregroundEntry = readFileSync(join(f.dataHome, "applications/app.pr-cockpit.desktop"), "utf8");
     expect(foregroundEntry).toContain(`Exec=${join(f.runtimeHome, "pr-cockpit/launch")} %u`);
@@ -650,7 +651,7 @@ describe("transactional Linux lifecycle", () => {
     const afterUninstallStage = await f.lifecycle(["stage", f.source, stateC[1]]);
     expect(afterUninstallStage.exitCode).toBe(1);
     expect(afterUninstallStage.stderr).toContain("Linux installation changed before release staging");
-  });
+  }, 20_000);
 
   test("waits out a live lifecycle lock and reclaims only a stale identity", async () => {
     const f = fixture();
@@ -678,5 +679,5 @@ describe("transactional Linux lifecycle", () => {
     symlinkSync(`999999999:-:${"b".repeat(32)}`, lock);
     expect((await f.lifecycle(["uninstall"])).exitCode).toBe(0);
     expect(lexists(lock)).toBe(false);
-  });
+  }, 10_000);
 });

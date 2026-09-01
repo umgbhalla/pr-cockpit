@@ -1,7 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const originalCockpitOrigin = Bun.env.COCKPIT_ORIGIN;
+Bun.env.COCKPIT_ORIGIN = "";
+afterAll(() => {
+  if (originalCockpitOrigin === undefined) delete Bun.env.COCKPIT_ORIGIN;
+  else Bun.env.COCKPIT_ORIGIN = originalCockpitOrigin;
+});
 
 test("listen ignores volatile metadata and transient failures, then exits on a cached PR update", async () => {
   let version = 1;
@@ -480,6 +487,58 @@ test("update delegates to the running server and waits for the new revision", as
   }
 });
 
+test("create posts an exact pull request through the Cockpit server", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-create-"));
+  const bodyFile = join(home, "body.md");
+  writeFileSync(bodyFile, "Exact multiline body.\n\nSecond paragraph.\n");
+  let received: { url: string; headers: Headers; body: unknown } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      received = { url: request.url, headers: request.headers, body: await request.json() };
+      return Response.json({ number: 7, url: "https://github.com/owner/repo/pull/7" }, { status: 201 });
+    },
+  });
+  try {
+    const child = Bun.spawn([
+      join(import.meta.dir, "pr-cockpit"),
+      "create",
+      "owner/repo",
+      "--head", "feature",
+      "--base", "main",
+      "--title", "Ship feature",
+      "--body-file", bodyFile,
+    ], {
+      env: { ...Bun.env, HOME: home, COCKPIT_ORIGIN: `http://127.0.0.1:${server.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, error, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect({ output, error, exitCode }).toEqual({
+      output: '{"number":7,"url":"https://github.com/owner/repo/pull/7"}\n',
+      error: "",
+      exitCode: 0,
+    });
+    expect(received?.url).toBe(`http://127.0.0.1:${server.port}/api/agent/repos/owner/repo/pulls`);
+    expect(received?.headers.get("x-pr-cockpit-cli")).toBe("1");
+    expect(received?.body).toEqual({
+      head: "feature",
+      base: "main",
+      title: "Ship feature",
+      body: "Exact multiline body.\n\nSecond paragraph.\n",
+      draft: false,
+    });
+  } finally {
+    server.stop(true);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("mutation commands enqueue every PR operation and wait for completion", async () => {
   const root = mkdtempSync(join(tmpdir(), "pr-cockpit-mutations-"));
   const bodyPath = join(root, "body.txt");
@@ -860,6 +919,40 @@ test("CLI keeps loopback when it is healthy and COCKPIT_URL is set", async () =>
     expect(output).toBe("from-loopback\n");
   } finally {
     server.stop(true);
+  }
+});
+
+test("CLI accepts a Tailscale HTTPS origin with a non-default port", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pr-cockpit-cli-tailnet-port-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "curl"), `#!/usr/bin/env bash
+if [[ "$*" == *"https://hyperion.tail2e89b4.ts.net:8443/api/agent/pr/owner/repo/1"* ]]; then
+  printf 'from-tailnet\\n'
+  exit 0
+fi
+exit 1
+`);
+  chmodSync(join(bin, "curl"), 0o755);
+  try {
+    const child = Bun.spawn([join(import.meta.dir, "pr-cockpit"), "owner/repo#1"], {
+      env: {
+        ...Bun.env,
+        HOME: home,
+        PATH: `${bin}:${Bun.env.PATH}`,
+        COCKPIT_ORIGIN: "https://hyperion.tail2e89b4.ts.net:8443",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [output, error, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect({ output, error, exitCode }).toEqual({ output: "from-tailnet\n", error: "", exitCode: 0 });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
