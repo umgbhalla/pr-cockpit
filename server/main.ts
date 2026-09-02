@@ -13,12 +13,14 @@ import { installMockNetworkGuard, isMockGithub, seedMockDatabase } from "./mockG
 import { mergeRendererOrigins, startCockpitServer } from "./cockpitServer.ts";
 import { ensureOmpInstalled } from "./commitMessage.ts";
 import { replicaEnabled, startReplicaSync } from "./replica.ts";
+import { captureFatal, startSentry } from "./sentry.ts";
 import { startTailscaleServe } from "./tailscaleServe.ts";
 
 const port = Number(Bun.env.COCKPIT_PORT ?? 4820);
 
 try {
   installMockNetworkGuard();
+  if (!isMockGithub) startSentry();
   seedSettings();
   if (isMockGithub) {
     if (!Bun.env.COCKPIT_DATA_DIR) throw new Error("COCKPIT_MOCK requires an explicit COCKPIT_DATA_DIR");
@@ -32,7 +34,7 @@ try {
 
   const fetchHandler = buildFetchHandler(port);
   // Serve is opt-in and best-effort; a missing binary or failed publish must not block loopback.
-  const serve = await startTailscaleServe(port);
+  const serve = await startTailscaleServe(port, isMockGithub ? { enabled: false } : {});
   startCockpitServer(port, fetchHandler, mergeRendererOrigins(Bun.env.COCKPIT_ALLOWED_ORIGINS, serve.origin));
 
   if (!isMockGithub && !replicaEnabled()) {
@@ -54,5 +56,6 @@ try {
   console.log(`pr-cockpit server listening on http://127.0.0.1:${port} (pid ${process.pid})`);
 } catch (err) {
   console.error(`pr-cockpit server failed to start on http://127.0.0.1:${port} (pid ${process.pid}):`, err);
+  await captureFatal(err);
   process.exit(1);
 }

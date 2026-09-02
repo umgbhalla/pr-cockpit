@@ -1,9 +1,15 @@
+<script module>
+  // Survives navigating away and back so the page renders instantly from the last snapshot.
+  const snapshotCache = new Map();
+</script>
+
 <script>
   import ActionStatusIcon from "./ActionStatusIcon.svelte";
   import MultiSelectDropdown from "./MultiSelectDropdown.svelte";
   import { prefetchRepoRun, rememberActionRun } from "./actionPrefetch.js";
   import { fetchRepoActions, fetchSettings } from "./api.js";
   import { durationText, relativeTime } from "./time.js";
+  import { isTypingTarget } from "./dom.js";
 
   let {
     repos: routeRepos = [],
@@ -25,6 +31,7 @@
   const validStatuses = new Set(statusOptions.map((option) => option.id));
 
   let selectedRepos = $state([]);
+  let repoPickerOpen = $state(false);
   let selectedWorkflows = $state([]);
   let selectedStatus = $state("all");
   let initialized = $state(false);
@@ -69,12 +76,27 @@
   }
 
   function updateFilters(next) {
-    syncSelection({
+    const selection = {
       repos: next.repos ?? selectedRepos,
       workflows: next.workflows ?? selectedWorkflows,
       status: next.status ?? selectedStatus,
-    });
+    };
+    syncSelection(selection);
+    if (next.repos !== undefined) {
+      if (selection.repos.length) localStorage.setItem("cockpit:repository-scope", JSON.stringify(selection.repos));
+      else localStorage.removeItem("cockpit:repository-scope");
+    }
   }
+
+  $effect(() => {
+    const onKey = (event) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target) || event.key.toLowerCase() !== "r") return;
+      repoPickerOpen = !repoPickerOpen;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   function runDuration(run) {
     if (run.runStartedAt && run.updatedAt) return durationText(run.runStartedAt, run.updatedAt);
@@ -134,6 +156,7 @@
   $effect(() => {
     if (!initialized) return;
     const filters = { repo: selectedRepos, workflow: selectedWorkflows, status: selectedStatus };
+    const cacheKey = JSON.stringify(filters);
     const controller = new AbortController();
     let stopped = false;
 
@@ -142,6 +165,7 @@
       try {
         const next = await fetchRepoActions(filters, controller.signal);
         if (stopped) return;
+        snapshotCache.set(cacheKey, next);
         snapshot = next;
         error = "";
       } catch (nextError) {
@@ -151,7 +175,11 @@
       }
     }
 
-    void refresh(true);
+    // Returning to the page or switching filters renders the last snapshot at once and
+    // refreshes behind it, instead of blanking to a loading state.
+    const cached = snapshotCache.get(cacheKey);
+    if (cached) snapshot = cached;
+    void refresh(!cached);
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void refresh(false);
     }, 15_000);
@@ -204,7 +232,7 @@
       {/each}
     </div>
     <div class="filter-pickers">
-      <MultiSelectDropdown label="Repository" options={snapshot?.repos ?? []} selected={selectedRepos} plural="repositories" onchange={(repos) => updateFilters({ repos })} />
+      <MultiSelectDropdown label="Repository" options={snapshot?.repos ?? []} selected={selectedRepos} plural="repositories" keybind="r" bind:open={repoPickerOpen} onchange={(repos) => updateFilters({ repos })} />
       <MultiSelectDropdown label="Workflow" options={workflowOptions} selected={selectedWorkflows} plural="workflows" onchange={(workflows) => updateFilters({ workflows })} />
     </div>
   </section>

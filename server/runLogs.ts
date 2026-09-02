@@ -3,8 +3,10 @@ import { promisify } from "node:util";
 import {
   RUN_JOB_LOG_FORMAT_VERSION,
   actionsLease,
+  claimWorkflowRunForPr,
   getFileContents,
   getRunJobLog,
+  latestWorkflowRunAttempt,
   listRunJobs,
   markActionsLeaseBootstrapped,
   markWorkflowRunJobsFetched,
@@ -32,6 +34,7 @@ import {
   fetchWorkflowRuns,
   fetchWorkflowRun,
   type RunJob,
+  type RunJobStep,
   type WorkflowRun,
 } from "./github.ts";
 
@@ -63,6 +66,15 @@ export interface CompactRun {
   htmlUrl: string | null;
 }
 
+export interface CompactStep {
+  name: string;
+  number: number;
+  status: string;
+  conclusion: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
 export interface CompactJob {
   id: number;
   runId: number;
@@ -80,6 +92,18 @@ export interface CompactJob {
   runnerGroupName: string | null;
   labels: string[];
   failedStep: string | null;
+  steps?: CompactStep[];
+}
+
+function compactSteps(steps: RunJobStep[] | undefined): CompactStep[] {
+  return (steps ?? []).map((step) => ({
+    name: step.name,
+    number: step.number,
+    status: step.status,
+    conclusion: step.conclusion ?? null,
+    startedAt: step.started_at ?? null,
+    completedAt: step.completed_at ?? null,
+  }));
 }
 
 export interface ActionsFetchers {
@@ -151,6 +175,29 @@ function compactRun(run: WorkflowRun): CompactRun {
   };
 }
 
+function compactStoredRun(run: WorkflowRunRow): CompactRun {
+  return {
+    id: run.run_id,
+    attempt: run.run_attempt,
+    headSha: run.head_sha,
+    headBranch: run.head_branch,
+    workflowName: run.workflow_name,
+    workflowPath: run.workflow_path,
+    displayTitle: run.display_title,
+    event: run.event,
+    actorLogin: run.actor_login,
+    prNumber: run.pr_number,
+    status: run.status,
+    conclusion: run.conclusion,
+    eventAt: run.event_at,
+    createdAt: run.created_at,
+    updatedAt: run.updated_at,
+    runStartedAt: run.run_started_at,
+    runNumber: run.run_number,
+    htmlUrl: run.html_url,
+  };
+}
+
 function compactJob(job: RunJob, run?: CompactRun): CompactJob {
   return {
     id: job.id,
@@ -169,6 +216,7 @@ function compactJob(job: RunJob, run?: CompactRun): CompactJob {
     runnerGroupName: job.runner_group_name ?? null,
     labels: job.labels ?? [],
     failedStep: job.steps?.find((step) => step.conclusion === "failure")?.name ?? null,
+    steps: compactSteps(job.steps),
   };
 }
 export interface WorkflowGraphJob {
@@ -343,6 +391,7 @@ export function compactActionsPayload(event: string, payload: any): { run?: Comp
         runnerGroupName: raw.runner_group_name ?? null,
         labels: raw.labels ?? [],
         failedStep: raw.steps?.find((step: any) => step.conclusion === "failure")?.name ?? null,
+        steps: compactSteps(raw.steps),
       },
     };
   }
@@ -373,6 +422,33 @@ export async function refreshRecentActions(
   return changed;
 }
 
+const WORKFLOW_REFRESH_INTERVAL_MS = 60_000;
+const workflowRefreshedAt = new Map<string, number>();
+
+// Selected workflows are fetched through their own endpoint: the repo-wide recent-runs
+// window covers only a day or so in busy repositories and misses quieter workflows entirely.
+export async function refreshWorkflowRuns(
+  repo: string,
+  workflowId: number,
+  runFetcher: typeof fetchWorkflowRunsForWorkflow = fetchWorkflowRunsForWorkflow,
+): Promise<number> {
+  const key = `${repo}\n${workflowId}`;
+  const now = Date.now();
+  const last = workflowRefreshedAt.get(key);
+  if (last !== undefined && now - last < WORKFLOW_REFRESH_INTERVAL_MS) return 0;
+  workflowRefreshedAt.set(key, now);
+  let changed = 0;
+  try {
+    for (const raw of await runFetcher(repo, workflowId)) {
+      if (storeRun(repo, null, compactRun(raw))) changed++;
+    }
+  } catch (error) {
+    workflowRefreshedAt.delete(key);
+    throw error;
+  }
+  return changed;
+}
+
 function jobIsComplete(job: { status: string; conclusion: string | null }): boolean {
   return job.status === "completed" || job.conclusion !== null;
 }
@@ -385,6 +461,7 @@ function storeJob(repo: string, job: CompactJob): boolean {
     conclusion: job.conclusion, started_at: job.startedAt, completed_at: job.completedAt,
     html_url: job.htmlUrl, runner_name: job.runnerName, runner_group_name: job.runnerGroupName,
     labels_json: JSON.stringify(job.labels), failed_step: job.failedStep,
+    steps_json: JSON.stringify(job.steps ?? []),
   });
 }
 
@@ -469,22 +546,34 @@ export async function cacheActionsRun(
   repo: string,
   number: number,
   headSha: string,
+  headBranch: string,
   runId: number,
   fetchers: RequestedRunFetchers = liveRequestedRunFetchers,
-): Promise<"cached" | "fetched" | "head-mismatch"> {
-  const cached = workflowRunsForLease(repo, number, headSha)
-    .filter((run) => run.run_id === runId)
-    .at(-1);
-  if (cached?.status === "completed" && cached.reconciled_at !== null) {
-    renewActionsLease(repo, number, headSha);
-    return "cached";
+): Promise<"cached" | "fetched" | "ownership-mismatch"> {
+  const run = compactRun(await fetchers.fetchWorkflowRun(repo, runId));
+  if (
+    !run.headBranch
+    || run.headBranch !== headBranch
+    || (run.prNumber !== null && run.prNumber !== number)
+    || !claimWorkflowRunForPr(repo, runId, number, headBranch)
+  ) {
+    return "ownership-mismatch";
   }
 
-  const run = compactRun(await fetchers.fetchWorkflowRun(repo, runId));
-  if (run.headSha !== headSha) return "head-mismatch";
   storeRun(repo, number, run);
+  if (!claimWorkflowRunForPr(repo, runId, number, headBranch)) {
+    return "ownership-mismatch";
+  }
+  const latest = latestWorkflowRunAttempt(repo, runId);
+  if (!latest) throw new Error("Actions run disappeared while caching");
   renewActionsLease(repo, number, headSha);
-  await queueReconciliation(repo, run, fetchers, false);
+  if (latest.status === "completed" && latest.reconciled_at !== null) {
+    return "cached";
+  }
+  const reconciled = await queueReconciliation(repo, compactStoredRun(latest), fetchers, false);
+  if (latest.status === "completed" && !reconciled) {
+    throw new Error(`Actions run ${runId} reconciliation did not complete`);
+  }
   return "fetched";
 }
 

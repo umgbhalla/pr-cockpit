@@ -172,10 +172,9 @@ function originFromHost(host: string): string | null {
 
 export function isTrustedCliHost(request: Request, fallbackHost: string): boolean {
   if (request.headers.get("tailscale-funnel-request")) return false;
-  const host = (request.headers.get("host") ?? fallbackHost).split(",")[0]!.trim();
+  const host = request.headers.get("host") ?? fallbackHost;
   if (isLoopbackCliHost(host)) return true;
   if (!lastStatus.origin) return false;
-  return [host, request.headers.get("x-forwarded-host")]
-    .filter((candidate): candidate is string => Boolean(candidate))
+  return [host, request.headers.get("x-forwarded-host") ?? ""]
     .some((candidate) => originFromHost(candidate.split(",")[0]!) === lastStatus.origin);
 }

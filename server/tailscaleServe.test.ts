@@ -20,7 +20,7 @@ function fakeTailscale(commands: string[][]): (args: readonly string[]) => Promi
   return async (args) => {
     commands.push([...args]);
     if (args[0] === "status") {
-      return { exitCode: 0, stdout: JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }), stderr: "" };
+      return { exitCode: 0, stdout: JSON.stringify({ Self: { DNSName: "cockpit-node.example.ts.net." } }), stderr: "" };
     }
     if (args[0] === "serve" && args[1] === "status") return { exitCode: 0, stdout: JSON.stringify({ Web: {} }), stderr: "" };
     if (args[0] === "serve" && args[1] === "--bg") return { exitCode: 0, stdout: "", stderr: "" };
@@ -43,9 +43,9 @@ test("Serve publishes configurable HTTPS to loopback and never Funnel", () => {
 });
 
 test("MagicDNS origin strips the trailing dot and includes a non-default port", () => {
-  const status = JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } });
-  expect(magicDnsHttpsOrigin(status)).toBe("https://hyperion.tail2e89b4.ts.net");
-  expect(magicDnsHttpsOrigin(status, 8443)).toBe("https://hyperion.tail2e89b4.ts.net:8443");
+  const status = JSON.stringify({ Self: { DNSName: "cockpit-node.example.ts.net." } });
+  expect(magicDnsHttpsOrigin(status)).toBe("https://cockpit-node.example.ts.net");
+  expect(magicDnsHttpsOrigin(status, 8443)).toBe("https://cockpit-node.example.ts.net:8443");
   expect(() => magicDnsHttpsOrigin("{}")).toThrow("did not report a MagicDNS name");
 });
 
@@ -59,7 +59,7 @@ test("Serve records its published origin", async () => {
   });
   expect(status).toEqual({
     enabled: true,
-    origin: "https://hyperion.tail2e89b4.ts.net:8443",
+    origin: "https://cockpit-node.example.ts.net:8443",
     proxy: "http://127.0.0.1:4820",
     httpsPort: 8443,
     error: null,
@@ -75,16 +75,16 @@ test("Serve records its published origin", async () => {
 test("Serve refuses to replace another root route", async () => {
   const commands: string[][] = [];
   const config = JSON.stringify({
-    Web: { "hyperion.tail2e89b4.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } } } },
+    Web: { "cockpit-node.example.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } } } },
   });
-  expect(conflictingServeRoute(config, "https://hyperion.tail2e89b4.ts.net:8443", 8443, "http://127.0.0.1:4820")).toContain("already routes /");
+  expect(conflictingServeRoute(config, "https://cockpit-node.example.ts.net:8443", 8443, "http://127.0.0.1:4820")).toContain("already routes /");
   const status = await startTailscaleServe(4820, {
     enabled: true,
     httpsPort: 8443,
     which: () => "/usr/bin/tailscale",
     run: async (args) => {
       commands.push([...args]);
-      if (args[0] === "status") return { exitCode: 0, stdout: JSON.stringify({ Self: { DNSName: "hyperion.tail2e89b4.ts.net." } }), stderr: "" };
+      if (args[0] === "status") return { exitCode: 0, stdout: JSON.stringify({ Self: { DNSName: "cockpit-node.example.ts.net." } }), stderr: "" };
       return { exitCode: 0, stdout: config, stderr: "" };
     },
   });
@@ -109,8 +109,8 @@ test("missing Tailscale and failed status leave loopback available", async () =>
 });
 
 test("configured origins merge with the published Serve origin", () => {
-  expect(mergeRendererOrigins("https://other.example", "https://hyperion.tail2e89b4.ts.net:8443")).toBe(
-    "https://other.example,https://hyperion.tail2e89b4.ts.net:8443",
+  expect(mergeRendererOrigins("https://other.example", "https://cockpit-node.example.ts.net:8443")).toBe(
+    "https://other.example,https://cockpit-node.example.ts.net:8443",
   );
   expect(mergeRendererOrigins(undefined, null)).toBeUndefined();
 });
@@ -123,10 +123,10 @@ test("CLI trust accepts loopback and the exact published Serve origin only", asy
     run: fakeTailscale([]),
   });
   expect(isTrustedCliHost(new Request("http://127.0.0.1/", { headers: { host: "127.0.0.1:4820" } }), "127.0.0.1:4820")).toBe(true);
-  expect(isTrustedCliHost(new Request("http://cockpit/", { headers: { host: "hyperion.tail2e89b4.ts.net:8443" } }), "cockpit")).toBe(true);
-  expect(isTrustedCliHost(new Request("http://cockpit/", { headers: { host: "hyperion.tail2e89b4.ts.net:443" } }), "cockpit")).toBe(false);
+  expect(isTrustedCliHost(new Request("http://cockpit/", { headers: { host: "cockpit-node.example.ts.net:8443" } }), "cockpit")).toBe(true);
+  expect(isTrustedCliHost(new Request("http://cockpit/", { headers: { host: "cockpit-node.example.ts.net:443" } }), "cockpit")).toBe(false);
   expect(isTrustedCliHost(new Request("http://cockpit/", {
-    headers: { host: "hyperion.tail2e89b4.ts.net:8443", "tailscale-funnel-request": "1" },
+    headers: { host: "cockpit-node.example.ts.net:8443", "tailscale-funnel-request": "1" },
   }), "cockpit")).toBe(false);
 });
 

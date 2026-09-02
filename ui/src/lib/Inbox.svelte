@@ -19,13 +19,14 @@
   import UpdateButton from "./UpdateButton.svelte";
   import { timedFlag } from "./timedFlag.svelte.js";
   import { prKey } from "./prKey.js";
-  import { availableRepositories, filterByRepository } from "./repoFilter.js";
+  import { availableRepositories, filterByRepositories } from "./repoFilter.js";
   import { showFlash } from "./flash.svelte.js";
   import CurrentBranchBadge from "./CurrentBranchBadge.svelte";
   import Kbd from "./Kbd.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import MultiSelectDropdown from "./MultiSelectDropdown.svelte";
 
-  let { refreshRevision = 0, pollCompletedAt = null, onFindPr = () => {} } = $props();
+  let { active = true, refreshRevision = 0, pollCompletedAt = null, onFindPr = () => {} } = $props();
   let handledRefreshRevision = refreshRevision;
 
   let prs = $state([]);
@@ -70,9 +71,19 @@
   let closedSeq = 0;
   let undo = $state(null);
   const archiveFlash = timedFlag(4000, () => (undo = null));
+  function storedRepositories() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("cockpit:repository-scope") ?? "[]");
+      return Array.isArray(parsed) ? parsed.filter((repo) => typeof repo === "string" && repo) : [];
+    } catch {
+      return [];
+    }
+  }
+
   let savedViews = $state([]);
   let configuredRepos = $state([]);
-  let repoFilter = $state("");
+  let selectedRepos = $state(storedRepositories());
+  let repoPickerOpen = $state(false);
   let pollIntervalS = $state(180);
   const inboxMountedAt = Date.now();
 
@@ -86,6 +97,13 @@
       savedViews = [];
       configuredRepos = [];
     }
+  }
+
+  function selectRepositories(repos) {
+    selectedRepos = [...repos];
+    if (repos.length) localStorage.setItem("cockpit:repository-scope", JSON.stringify(repos));
+    else localStorage.removeItem("cockpit:repository-scope");
+    selected = 0;
   }
 
   async function persistViews(views) {
@@ -209,6 +227,8 @@
 
   let now = $state(Date.now());
   $effect(() => {
+    if (!active) return;
+    now = Date.now();
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
@@ -274,7 +294,7 @@
       const selectedKey = view === "closed" && ordered[selected] ? prKey(ordered[selected]) : null;
       closedPrs = res.prs;
       if (selectedKey !== null) {
-        const idx = filterByRepository(closedPrs, repoFilter).findIndex((pr) => prKey(pr) === selectedKey);
+        const idx = filterByRepositories(closedPrs, selectedRepos).findIndex((pr) => prKey(pr) === selectedKey);
         if (idx >= 0) selected = idx;
       }
     } catch {
@@ -325,9 +345,14 @@
   let historyActive = $derived(wantsHistory(filterQuery) && historyQuery === filterQuery.trim() && !historyLoading);
   let queryFilteredPrs = $derived(wantsHistory(filterQuery) ? (historyQuery === filterQuery.trim() ? historyPrs : []) : filterPrs(prs, filterQuery, showArchived));
   let availableRepos = $derived(availableRepositories(configuredRepos, prs, archivedPrs, closedPrs));
-  let filteredPrs = $derived(filterByRepository(queryFilteredPrs, repoFilter));
-  let filteredClosedPrs = $derived(filterByRepository(closedPrs, repoFilter));
-  let actionsHref = $derived(`#/actions?repo=${encodeURIComponent(repoFilter)}`);
+  let filteredPrs = $derived(filterByRepositories(queryFilteredPrs, selectedRepos));
+  let filteredClosedPrs = $derived(filterByRepositories(closedPrs, selectedRepos));
+  let actionsHref = $derived.by(() => {
+    const params = new URLSearchParams();
+    if (selectedRepos.length === 0) params.append("repo", "");
+    else for (const repo of selectedRepos) params.append("repo", repo);
+    return `#/actions?${params}`;
+  });
   let activeView = $derived(savedViews.find((v) => v.query === filterQuery.trim())?.name ?? null);
 
   // history views can't be counted from the open inbox; show the live count only while applied, else a placeholder
@@ -402,33 +427,59 @@
   }
 
   let groups = $derived.by(() => {
+    const pinned = filteredPrs.filter((pr) => pr.rank != null);
     const buckets = new Map();
     for (const pr of filteredPrs) {
+      if (pr.rank != null) continue;
       const id = classify(topUnit(pr), viewerLogin).group;
       if (!buckets.has(id)) buckets.set(id, []);
       buckets.get(id).push(pr);
     }
-    return GROUP_ORDER.filter((id) => buckets.has(id)).map((id) => {
+    const statusGroups = GROUP_ORDER.filter((id) => buckets.has(id)).map((id) => {
       const { units, unrankedCount, items } = orderGroup(buckets.get(id));
       return { id, title: GROUP_TITLES[id], units, unrankedCount, items };
     });
+    if (!pinned.length) return statusGroups;
+    const { units, unrankedCount, items } = orderGroup(pinned);
+    return [{ id: "pinned", title: "Pinned", units, unrankedCount, items }, ...statusGroups];
   });
 
   let openOrdered = $derived(groups.flatMap((g) => g.items.filter((i) => i.pr).map((i) => i.pr)));
 
   let dragKey = $state(null);
   let dropHint = $state(null);
+  let rankBusy = new Set();
 
   async function applyRank(pr, position) {
+    const key = prKey(pr);
+    if (rankBusy.has(key)) return;
+    rankBusy.add(key);
     const target = prs.find((p) => prKey(p) === prKey(pr));
     if (target) {
       target.rank = position;
       prs = [...prs];
+      queueMicrotask(() => {
+        const index = ordered.findIndex((candidate) => prKey(candidate) === key);
+        if (index >= 0) selected = index;
+      });
     }
     try {
       await reorderPr(pr.repo, pr.number, position);
-    } catch {}
-    loadInbox();
+    } catch {
+      showFlash(`Couldn't ${position === null ? "unpin" : "pin"} #${pr.number}.`);
+    } finally {
+      await loadInbox();
+      rankBusy.delete(key);
+    }
+  }
+
+  function togglePinned(pr) {
+    if (pr.rank != null) {
+      applyRank(pr, null);
+      return;
+    }
+    const lastPosition = Math.max(-1, ...prs.map((item) => item.rank).filter((rank) => rank != null));
+    applyRank(pr, lastPosition + 1);
   }
 
   function onDragStart(e, pr) {
@@ -477,7 +528,7 @@
     if (!draggedKey) return;
     const r = e.currentTarget.getBoundingClientRect();
     const before = e.clientY - r.top < r.height / 2;
-    const group = groups.find((g) => g.id === classify(topUnit(overPr), viewerLogin).group);
+    const group = groups.find((g) => g.id === (overPr.rank != null ? "pinned" : classify(topUnit(overPr), viewerLogin).group));
     if (!group) return;
     const dragged = group.units.find((p) => prKey(p) === draggedKey);
     if (!dragged) return;
@@ -511,7 +562,7 @@
   let dragGroupId = $derived.by(() => {
     if (!dragKey) return null;
     const pr = prs.find((p) => prKey(p) === dragKey);
-    return pr ? classify(topUnit(pr), viewerLogin).group : null;
+    return pr ? (pr.rank != null ? "pinned" : classify(topUnit(pr), viewerLogin).group) : null;
   });
   let ordered = $derived(view === "closed" ? filteredClosedPrs : showArchived ? [...openOrdered, ...archivedPrs] : openOrdered);
   let archivedSet = $derived(new Set(archivedPrs.map((pr) => prKey(pr))));
@@ -532,6 +583,7 @@
       keys.push({ key: "C", label: "back to open" });
       return keys;
     }
+    if (pr) keys.push({ key: "s", label: pr.rank == null ? "pin" : "unpin" });
     if (pr) keys.push({ key: "e", label: isArchived(pr) ? "unarchive" : "archive" });
     keys.push({ key: "A", label: showArchived ? "hide archived" : "archived" });
     keys.push({ key: "C", label: "recently merged" });
@@ -625,6 +677,7 @@
   }
 
   $effect(() => {
+    if (!active) return;
     function onKey(e) {
       if (e.metaKey && e.key === ",") {
         location.hash = "#/settings";
@@ -644,6 +697,11 @@
         e.preventDefault();
         return;
       }
+      if (e.key === "Escape" && repoPickerOpen) {
+        repoPickerOpen = false;
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Escape" && filterOpen) {
         closeFilter();
         e.preventDefault();
@@ -656,6 +714,11 @@
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
+      if (e.key === "r") {
+        repoPickerOpen = !repoPickerOpen;
+        e.preventDefault();
+        return;
+      }
       if (e.key === "/") {
         openFilter();
         e.preventDefault();
@@ -707,6 +770,8 @@
         }
       } else if (e.key === "o") {
         if (pr) openGithub(pr);
+      } else if (view === "open" && e.key === "s") {
+        if (pr && !isArchived(pr) && pr.state === "OPEN") togglePinned(pr);
       } else if (view === "open" && keybindAgents.some((a) => a.id !== "fixer" && a.keybind === e.key)) {
         const def = keybindAgents.find((a) => a.id !== "fixer" && a.keybind === e.key);
         if (def.id === "autofix") openAutofixConfirm();
@@ -777,7 +842,7 @@
       <div class="view-tabs" role="tablist" aria-label="List view">
         <button class="view-tab" role="tab" aria-selected={view === "open"} class:active={view === "open"} onclick={() => showView("open")}>
           Open
-          <span class="view-tab-count">{filterByRepository(prs, repoFilter).length}</span>
+          <span class="view-tab-count">{filterByRepositories(prs, selectedRepos).length}</span>
           {#if view === "closed"}<Kbd keys="tab" />{/if}
         </button>
         <button class="view-tab" role="tab" aria-selected={view === "closed"} class:active={view === "closed"} onclick={() => showView("closed")}>
@@ -785,15 +850,17 @@
         </button>
         <a class="view-tab" role="tab" aria-selected="false" href={actionsHref}>Actions</a>
       </div>
-      <label class="repo-filter">
-        <span class="sr-only">Repository</span>
-        <select bind:value={repoFilter} onchange={() => (selected = 0)} aria-label="Filter by repository">
-          <option value="">All repositories</option>
-          {#each availableRepos as repo}
-            <option value={repo}>{repo}</option>
-          {/each}
-        </select>
-      </label>
+      <div class="repo-filter">
+        <MultiSelectDropdown
+          label="Repository"
+          options={availableRepos}
+          selected={selectedRepos}
+          plural="repositories"
+          keybind="r"
+          bind:open={repoPickerOpen}
+          onchange={selectRepositories}
+        />
+      </div>
     </div>
 
     {#if filterOpen && view === "open"}
@@ -850,7 +917,17 @@
         </span>
         <span class="row-badge-slot"><span class="row-badge badge {status.tone}">{status.label}</span></span>
         <div class="row-main">
-          <div class="row-title">{pr.title}</div>
+          <div class="row-title">
+            <span class="row-title-text">{pr.title}</span>
+            {#if pr.rank != null}
+              <span class="pinned-mark" title="Pinned until merged or archived" aria-label="Pinned">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m7 3 6 0-1 4 3 3v1H5v-1l3-3-1-4Z" />
+                  <path d="M10 11v6" />
+                </svg>
+              </span>
+            {/if}
+          </div>
           <div class="row-meta mono">
             <span class="num">#{pr.number}</span>
             <span class="sep">·</span>
@@ -858,7 +935,7 @@
             <span class="sep">·</span>
             <span class="branch">{pr.baseRef} <span class="arrow">←</span> {pr.headRef}</span>
             {#if pr.localBranch === pr.headRef}
-              <CurrentBranchBadge />
+              <CurrentBranchBadge label="checked out" />
             {/if}
             <span class="sep">·</span>
             <span class="add" title={statsDiffer ? `+${pr.rawAdditions} including tests` : undefined}>+{pr.additions}</span>
@@ -882,7 +959,7 @@
           </span>
         {/if}
         <span class="row-age mono">{relativeTime(pr.updatedAt)}</span>
-        {#if index === selected}<Kbd keys="enter" />{/if}
+        {#if index === selected}<Kbd keys="s" label={pr.rank == null ? "Pin" : "Unpin"} /><Kbd keys="enter" />{/if}
       </a>
     {/snippet}
 
@@ -904,20 +981,22 @@
       {/if}
       {#each group.items as item (item.divider ? group.id + ":div" : prKey(item.pr))}
         {#if item.divider}
-          <div
-            class="rank-divider"
-            class:drop-active={dropHint?.key === "div:" + group.id}
-            role="separator"
-            ondragover={(e) => {
-              if (dragKey) {
-                e.preventDefault();
-                dropHint = { key: "div:" + group.id, before: false };
-              }
-            }}
-            ondrop={(e) => onDropDivider(e, group)}
-          >
-            <span class="rank-divider-label">Pinned</span>
-          </div>
+          {#if group.id !== "pinned"}
+            <div
+              class="rank-divider"
+              class:drop-active={dropHint?.key === "div:" + group.id}
+              role="separator"
+              ondragover={(e) => {
+                if (dragKey) {
+                  e.preventDefault();
+                  dropHint = { key: "div:" + group.id, before: false };
+                }
+              }}
+              ondrop={(e) => onDropDivider(e, group)}
+            >
+              <span class="rank-divider-label">Pinned</span>
+            </div>
+          {/if}
         {:else}
           {@render row(item.pr)}
         {/if}
@@ -952,7 +1031,7 @@
       </a>
     {/snippet}
 
-    <div class="inbox-layout" class:empty-layout={view === "open" && loaded && !error && !syncing && (prs.length === 0 || Boolean(repoFilter && filteredPrs.length === 0))}>
+    <div class="inbox-layout">
       <div class="queue-list">
         {#if view === "closed"}
           {#if !closedLoaded}
@@ -960,7 +1039,7 @@
           {:else if closedPrs.length === 0}
             <div class="empty">Nothing merged or closed yet</div>
           {:else if filteredClosedPrs.length === 0}
-            <div class="empty">Nothing merged or closed in {repoFilter}</div>
+            <div class="empty">Nothing merged or closed in the selected repositories</div>
           {/if}
           <section class="queue-group">
             <div class="group-body">
@@ -974,8 +1053,8 @@
             <div class="empty">Syncing with GitHub…</div>
           {:else if loaded && prs.length === 0}
             <div class="empty">No open pull requests</div>
-          {:else if repoFilter && filteredPrs.length === 0}
-            <div class="empty">No open pull requests in {repoFilter}</div>
+          {:else if selectedRepos.length && filteredPrs.length === 0}
+            <div class="empty">No open pull requests in the selected repositories</div>
           {:else if wantsHistory(filterQuery) && !historyActive}
             <div class="empty">Searching history…</div>
           {:else if filterQuery && filteredPrs.length === 0}
@@ -1344,7 +1423,6 @@
     text-decoration: none;
     color: inherit;
     border-left: 2px solid transparent;
-    transition: background 0.08s ease;
   }
   .row.stack-child {
     margin-left: 26px;
@@ -1526,6 +1604,9 @@
   .page {
     height: 100%;
     overflow-y: auto;
+    /* Keep the Inbox on Chromium's accelerated native scroll path. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll) transparent;
     display: block;
     padding: 20px 32px 76px;
   }
@@ -1543,9 +1624,8 @@
     min-height: 70px;
     padding: 20px 2px 14px;
     margin: -20px 0 18px;
-    background: var(--overlay-bg);
+    background: var(--bg);
     border-bottom: 1px solid var(--border-soft);
-    backdrop-filter: blur(18px) saturate(160%);
   }
   .head-title {
     font-family: var(--sans);
@@ -1576,16 +1656,6 @@
   }
   .repo-filter {
     margin-left: auto;
-  }
-  .repo-filter select {
-    min-height: 36px;
-    max-width: 280px;
-    padding: 0 34px 0 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--panel);
-    color: var(--text);
-    font: 12px var(--sans);
   }
   .view-tab {
     display: flex;
@@ -1636,16 +1706,6 @@
     grid-template-columns: minmax(0, 1fr) 236px;
     align-items: start;
     gap: 20px;
-  }
-  .inbox-layout.empty-layout {
-    padding-top: clamp(8px, 3vh, 32px);
-  }
-  .empty-layout .empty {
-    min-height: clamp(160px, 34vh, 360px);
-    display: grid;
-    place-items: center;
-    border: 0;
-    font-size: 14px;
   }
   .queue-list {
     min-width: 0;
@@ -1826,7 +1886,7 @@
     border: 0;
     border-bottom: 1px solid var(--border-soft);
     border-radius: 0;
-    transition: background-color 140ms ease, color 140ms ease;
+    transition: none;
   }
   .group-body > .row:last-child { border-bottom: none; }
   .row.stack-child {
@@ -1936,17 +1996,6 @@
     .queue-sidecar {
       grid-template-columns: 1fr;
     }
-    .queue-toolbar {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .repo-filter {
-      margin-left: 0;
-    }
-    .repo-filter select {
-      width: 100%;
-      max-width: none;
-    }
     .row-badge-slot {
       display: none;
     }
@@ -1971,8 +2020,7 @@
     padding: 18px 0 14px;
     margin: -18px 0 8px;
     border-bottom-color: var(--border-soft);
-    background: linear-gradient(to bottom, var(--bg) 74%, color-mix(in srgb, var(--bg) 84%, transparent));
-    backdrop-filter: blur(14px);
+    background: var(--bg);
   }
   .head-title {
     font-size: 24px;
@@ -1995,23 +2043,8 @@
     margin: 0;
   }
   .queue-toolbar {
-    align-items: center;
     gap: 10px;
     margin-bottom: 20px;
-  }
-  .repo-filter {
-    margin-left: auto;
-  }
-  .repo-filter select {
-    min-height: 32px;
-    max-width: 260px;
-    padding: 0 32px 0 12px;
-    border: 0;
-    border-radius: 999px;
-    background-color: var(--panel);
-    box-shadow: var(--shadow-control-outlined);
-    color: var(--text);
-    font: 500 14px var(--sans);
   }
   .view-tab {
     min-height: 32px;
@@ -2254,6 +2287,31 @@
     }
   }
 
+  .row-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .row-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pinned-mark {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    color: var(--link);
+  }
+  .pinned-mark svg {
+    width: 14px;
+    height: 14px;
+  }
+
   /* Phone: rows stack instead of holding desktop columns, and keyboard
      affordances give way to touch targets. */
   @media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
@@ -2294,6 +2352,14 @@
     }
     .view-tab :global(.kbd) {
       display: none;
+    }
+    .queue-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .repo-filter {
+      width: 100%;
+      margin-left: 0;
     }
     .row {
       display: grid;
@@ -2345,6 +2411,13 @@
       -webkit-line-clamp: 2;
       white-space: normal;
       overflow: hidden;
+    }
+    .row-title-text {
+      display: contents;
+      white-space: normal;
+    }
+    .pinned-mark {
+      display: none;
     }
     .row-meta {
       flex-wrap: wrap;

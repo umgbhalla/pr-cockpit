@@ -80,6 +80,9 @@ async function install(
           COCKPIT_ORIGIN: options.origin,
           COCKPIT_TAILSCALE_SERVE: "1",
           COCKPIT_TAILSCALE_HTTPS_PORT: options.tailscalePort ?? "443",
+        } : options.tailscalePort ? {
+          COCKPIT_TAILSCALE_SERVE: "1",
+          COCKPIT_TAILSCALE_HTTPS_PORT: options.tailscalePort,
         } : {}),
       },
       stdout: "pipe",
@@ -125,6 +128,14 @@ test("new config is a commented inert example", async () => {
   expect(result.config).toContain('# COCKPIT_PROXY="build-server"');
   expect(result.config).not.toContain("Agents mutate existing PRs");
   expect(result.config).not.toMatch(/^[^#\n]*COCKPIT_PROXY=/m);
+  expect(result.serverPlist).not.toContain("COCKPIT_TAILSCALE");
+}, 10_000);
+
+test("a Tailscale Serve install persists the opt-in launch environment", async () => {
+  const result = await install(null, { tailscalePort: "8443" });
+  expect(result.exitCode).toBe(0);
+  expect(result.serverPlist).toContain("<string>COCKPIT_TAILSCALE_SERVE=1</string>");
+  expect(result.serverPlist).toContain("<string>COCKPIT_TAILSCALE_HTTPS_PORT=8443</string>");
 }, 10_000);
 
 test("a Tailscale-first install persists the preferred origin and Serve port", async () => {
@@ -145,7 +156,7 @@ test("an app registration left behind by another root is replaced", async () => 
   expect(result.calls).toContain(`bootstrap gui/${uid} `);
   expect(result.calls).toContain("Library/LaunchAgents/app.pr-cockpit.plist");
   expect(result.serverPlist).toContain(`<string>PATH=${result.localBin}:`);
-}, 10_000);
+});
 
 test("no loaded registration bootstraps the app", async () => {
   const result = await install(null);
@@ -153,7 +164,7 @@ test("no loaded registration bootstraps the app", async () => {
   expect(result.stdout).not.toContain("replacing the app registration");
   expect(result.calls).not.toContain(`bootout gui/${uid}/app.pr-cockpit\n`);
   expect(result.calls).toContain("Library/LaunchAgents/app.pr-cockpit.plist");
-}, 10_000);
+});
 
 test("a registration for this root keeps the running window", async () => {
   const result = await install("__ROOT__");
@@ -163,7 +174,7 @@ test("a registration for this root keeps the running window", async () => {
   expect(result.calls).not.toContain(`bootout gui/${uid}/app.pr-cockpit\n`);
   expect(result.calls).not.toContain("LaunchAgents/app.pr-cockpit.plist");
   expect(result.calls).toContain("app.pr-cockpit.server.plist");
-}, 10_000);
+});
 
 test("replica installation restarts the local server", async () => {
   const result = await install("__ROOT__", {
@@ -175,4 +186,4 @@ test("replica installation restarts the local server", async () => {
   expect(result.serverPlist).toContain("<string>--server-only</string>");
   expect(result.serverPlist).toContain("<string>COCKPIT_REPLICA_SSH_HOST=root@dev-vm</string>");
   expect(result.serverPlist).toMatch(/<string>COCKPIT_LAUNCHER=.*\/Library\/Application Support\/PR Cockpit\/launch<\/string>/);
-}, 10_000);
+});

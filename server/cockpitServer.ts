@@ -36,9 +36,7 @@ export function mergeRendererOrigins(...entries: Array<string | undefined | null
   return origins.size === 0 ? undefined : [...origins].join(",");
 }
 
-function buildOriginPolicy(
-  configured: string | undefined,
-): (request: Request) => boolean {
+function buildOriginPolicy(configured: string | undefined): (request: Request) => boolean {
   const allowedOrigins = parseAllowedOrigins(configured);
   return (request) => {
     const origin = request.headers.get("origin");
@@ -46,14 +44,11 @@ function buildOriginPolicy(
     if (allowedOrigins.has(origin)) return true;
     try {
       const url = new URL(origin);
-      if ((url.protocol === "http:" || url.protocol === "https:")
-        && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")) {
-        return true;
-      }
+      return (url.protocol === "http:" || url.protocol === "https:")
+        && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]");
     } catch {
       return false;
     }
-    return false;
   };
 }
 
@@ -62,14 +57,14 @@ export function startCockpitServer(port: number, fetchHandler: FetchHandler, all
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
-    async fetch(request, bunServer) {
+    fetch(request, bunServer) {
       if (new URL(request.url).pathname === "/api/events") {
-        if (!await originAllowed(request)) return new Response("Forbidden", { status: 403 });
+        if (!originAllowed(request)) return new Response("Forbidden", { status: 403 });
         return bunServer.upgrade(request)
           ? undefined
           : new Response("WebSocket upgrade required", { status: 426 });
       }
-      if (UNSAFE_BROWSER_METHODS[request.method] && !await originAllowed(request)) {
+      if (UNSAFE_BROWSER_METHODS[request.method] && !originAllowed(request)) {
         return new Response("Forbidden", { status: 403 });
       }
       return fetchHandler(request);

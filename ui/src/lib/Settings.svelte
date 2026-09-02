@@ -1,5 +1,5 @@
 <script>
-  import { fetchHealth, fetchRelayCoverage, fetchRelayStatus, fetchSettings, saveSettings } from "./api.js";
+  import { fetchRelayCoverage, fetchRelayStatus, fetchSettings, saveSettings } from "./api.js";
   import { setCodeTheme, setFonts, setScales, setTheme } from "./theme.svelte.js";
   import { setPrefs } from "./prefs.svelte.js";
   import { BUILTIN_TEST_PATH } from "./testPath.js";
@@ -35,7 +35,7 @@
   let diffLayout = $state("split");
   let forceMergeRepos = $state([]);
   let agentHarness = $state("claude");
-  let harnessAvailable = $state({ claude: true, omp: true });
+  let harnessAvailable = $state({ claude: true, omp: true, codex: true });
   let agents = $state([]);
   let keybindOpenApp = $state("");
   let keybindOpenPalette = $state("");
@@ -83,7 +83,7 @@
   let keybindClash = $derived(shortcutsClash(keybindOpenApp, keybindOpenPalette, shortcutDefaults));
 
   // single-char keys the PR-detail and inbox handlers already own
-  const RESERVED_KEYS = new Set([..."123456789", ..."gGdJKjkxcvremMusqopT", ..."ez", "A", "C", "/"]);
+  const RESERVED_KEYS = new Set([..."123456789", ..."gGdJKjkxcvremMusqopT", ..."esz", "A", "C", "/"]);
   const isCustom = (a) => a.id.startsWith("custom-");
 
   let agentKeybindIssues = $derived.by(() => {
@@ -145,6 +145,7 @@
     keybindOpenPalette = s.keybind_open_palette;
     relayUrl = s.relay_url;
     testPathRegex = s.test_path_regex || BUILTIN_TEST_PATH.source;
+    health = s.tailscale_serve ? { tailscaleServe: s.tailscale_serve } : null;
   }
 
   let relayOrg = $derived(configuredRepos[0]?.split("/")[0] ?? "");
@@ -195,9 +196,6 @@
       .catch(() => {});
     fetchRelayCoverage()
       .then((c) => (relayCoverage = c))
-      .catch(() => {});
-    fetchHealth()
-      .then((value) => (health = value))
       .catch(() => {});
   });
 
@@ -326,17 +324,17 @@
         <button class="btn setup-again" type="button" onclick={onRunSetup}>Run setup again</button>
 
         <div class="settings-grid">
-          <div class="field field-wide private-access" class:private-access-live={privateAccess.state === "live"}>
-            <span class="label">Private access</span>
-            {#if privateAccess.state === "live"}
-              <span class="hint">Live through {privateAccess.kind}. The local server remains private on loopback.</span>
-              <a class="private-origin mono" href={privateAccess.origin}>{privateAccess.origin}</a>
-            {:else if privateAccess.state === "error"}
-              <span class="hint invalid-hint">Tailscale could not publish Cockpit: {privateAccess.error}</span>
-            {:else}
-              <span class="hint">Local only. Enable Tailscale Serve during installation to open Cockpit securely from your tailnet.</span>
-            {/if}
-          </div>
+          {#if privateAccess}
+            <div class="field field-wide private-access" class:private-access-live={privateAccess.state === "live"}>
+              <span class="label">Private access</span>
+              {#if privateAccess.state === "live"}
+                <span class="hint">Live through {privateAccess.kind}. The local server remains private on loopback.</span>
+                <a class="private-origin mono" href={privateAccess.origin}>{privateAccess.origin}</a>
+              {:else}
+                <span class="hint invalid-hint">Tailscale could not publish Cockpit: {privateAccess.error}</span>
+              {/if}
+            </div>
+          {/if}
 
           <label class="field field-wide">
             <span class="label">Repositories</span>
@@ -532,6 +530,7 @@
           <select class="input narrow" bind:value={agentHarness}>
             <option value="claude">Claude Code{harnessAvailable.claude ? "" : " (not installed)"}</option>
             <option value="omp">omp{harnessAvailable.omp ? "" : " (not installed)"}</option>
+            <option value="codex">Codex{harnessAvailable.codex ? "" : " (not installed)"}</option>
           </select>
         </label>
 
@@ -579,10 +578,10 @@
               {#if agent.trigger === "keybind"}
                 <input class="input mono keybind-input" maxlength="1" bind:value={agent.keybind} spellcheck="false" autocomplete="off" />
               {/if}
-              <span class="trigger-kind">model</span>
+              <span class="trigger-kind">{agentHarness === "codex" ? "effort" : "model"}</span>
               <select class="input narrow" bind:value={agent.model}>
-                <option value="opus">opus</option>
-                <option value="sonnet">sonnet</option>
+                <option value="opus">{agentHarness === "codex" ? "high" : "opus"}</option>
+                <option value="sonnet">{agentHarness === "codex" ? "medium" : "sonnet"}</option>
               </select>
               <span class="hint trigger-hint">{agent.trigger === "keybind" ? "Press its key on a PR or inbox selection" : "Runs automatically when new commits land on your own PRs"}</span>
             </div>
@@ -658,9 +657,9 @@
 
       {#if activeTab === "advanced"}
         <label class="field">
-          <span class="label">Connect to primary Cockpit</span>
-          <span class="hint">SSH host such as user@host, or a Tailscale MagicDNS origin such as https://host.ts.net when that node publishes with Serve.</span>
-          <input class="input mono" bind:value={replicaSshHost} placeholder="user@host or https://host.ts.net" spellcheck="false" autocomplete="off" />
+          <span class="label">Connect to primary Cockpit database over SSH</span>
+          <span class="hint">For example, if you have multiple machines and want to save API quota, PR Cockpit can act as a replica of another machine's database.</span>
+          <input class="input mono" bind:value={replicaSshHost} placeholder="user@host" spellcheck="false" autocomplete="off" />
         </label>
       {/if}
 

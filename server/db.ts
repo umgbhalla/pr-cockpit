@@ -242,6 +242,7 @@ CREATE TABLE IF NOT EXISTS run_jobs (
   runner_group_name TEXT,
   labels_json TEXT NOT NULL DEFAULT '[]',
   failed_step TEXT,
+  steps_json TEXT NOT NULL DEFAULT '[]',
   log_gz BLOB,
   log_bytes INTEGER,
   log_truncated INTEGER NOT NULL DEFAULT 0,
@@ -325,6 +326,7 @@ for (const [name, definition] of [
   ["runner_group_name", "TEXT"],
   ["labels_json", "TEXT NOT NULL DEFAULT '[]'"],
   ["log_format_version", "INTEGER NOT NULL DEFAULT 1"],
+  ["steps_json", "TEXT NOT NULL DEFAULT '[]'"],
 ] as const) {
   if (!runJobColumns.some((column) => column.name === name)) {
     db.exec(`ALTER TABLE run_jobs ADD COLUMN ${name} ${definition}`);
@@ -860,6 +862,7 @@ export interface RunJobRow {
   runner_group_name: string | null;
   labels_json: string;
   failed_step: string | null;
+  steps_json: string;
   log_bytes: number | null;
   log_truncated: number;
   log_error: string | null;
@@ -882,7 +885,7 @@ const upsertWorkflowRunStmt = db.prepare(`
     run_started_at, run_number, html_url, fetched_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT (repo, run_id, run_attempt) DO UPDATE SET
-    pr_number = COALESCE(excluded.pr_number, workflow_runs.pr_number),
+    pr_number = COALESCE(workflow_runs.pr_number, excluded.pr_number),
     head_sha = excluded.head_sha, head_branch = excluded.head_branch,
     workflow_name = excluded.workflow_name, workflow_path = excluded.workflow_path,
     display_title = excluded.display_title, event = excluded.event, actor_login = excluded.actor_login,
@@ -971,25 +974,27 @@ export function queueWorkflowRunRerun(repo: string, runId: number, status: "queu
 const getRunJobStmt = db.prepare<RunJobRow, [string, number]>(
   `SELECT repo, job_id, run_id, run_attempt, head_sha, head_branch, workflow_name, name,
     status, conclusion, started_at, completed_at, html_url, runner_name, runner_group_name,
-    labels_json, failed_step, log_bytes, log_truncated, log_error, log_format_version, fetched_at
+    labels_json, failed_step, steps_json, log_bytes, log_truncated, log_error, log_format_version, fetched_at
    FROM run_jobs WHERE repo = ? AND job_id = ?`,
 );
 const upsertRunJobStmt = db.prepare(`
   INSERT INTO run_jobs (
     repo, job_id, run_id, run_attempt, head_sha, head_branch, workflow_name, name,
     status, conclusion, started_at, completed_at, html_url, runner_name, runner_group_name,
-    labels_json, failed_step, fetched_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    labels_json, failed_step, steps_json, fetched_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   ON CONFLICT (repo, job_id) DO UPDATE SET
     run_id = excluded.run_id, run_attempt = excluded.run_attempt, head_sha = excluded.head_sha,
     head_branch = excluded.head_branch, workflow_name = excluded.workflow_name, name = excluded.name,
     status = excluded.status, conclusion = excluded.conclusion, started_at = excluded.started_at,
     completed_at = excluded.completed_at, html_url = excluded.html_url, runner_name = excluded.runner_name,
     runner_group_name = excluded.runner_group_name, labels_json = excluded.labels_json,
-    failed_step = excluded.failed_step, fetched_at = datetime('now')
+    failed_step = excluded.failed_step, steps_json = excluded.steps_json, fetched_at = datetime('now')
 `);
 
-export function upsertRunJob(job: Omit<RunJobRow, "log_bytes" | "log_truncated" | "log_error" | "log_format_version" | "fetched_at">): boolean {
+export function upsertRunJob(
+  job: Omit<RunJobRow, "steps_json" | "log_bytes" | "log_truncated" | "log_error" | "log_format_version" | "fetched_at"> & { steps_json?: string },
+): boolean {
   const latest = db.prepare<{ attempt: number | null }, [string, number]>(
     "SELECT MAX(run_attempt) AS attempt FROM workflow_runs WHERE repo = ? AND run_id = ?",
   ).get(job.repo, job.run_id)?.attempt;
@@ -1007,7 +1012,7 @@ export function upsertRunJob(job: Omit<RunJobRow, "log_bytes" | "log_truncated" 
   upsertRunJobStmt.run(
     job.repo, job.job_id, job.run_id, job.run_attempt, job.head_sha, job.head_branch,
     job.workflow_name, job.name, job.status, job.conclusion, job.started_at, job.completed_at,
-    job.html_url, job.runner_name, job.runner_group_name, job.labels_json, job.failed_step,
+    job.html_url, job.runner_name, job.runner_group_name, job.labels_json, job.failed_step, job.steps_json ?? "[]",
   );
   return true;
 }
@@ -1015,7 +1020,7 @@ export function upsertRunJob(job: Omit<RunJobRow, "log_bytes" | "log_truncated" 
 const listRunJobsStmt = db.prepare<RunJobRow, [string, string]>(
   `SELECT j.repo, j.job_id, j.run_id, j.run_attempt, j.head_sha, j.head_branch,
     j.workflow_name, j.name, j.status, j.conclusion, j.started_at, j.completed_at,
-    j.html_url, j.runner_name, j.runner_group_name, j.labels_json, j.failed_step,
+    j.html_url, j.runner_name, j.runner_group_name, j.labels_json, j.failed_step, j.steps_json,
     j.log_bytes, j.log_truncated, j.log_error, j.log_format_version, j.fetched_at
    FROM run_jobs j
    WHERE j.repo = ? AND j.head_sha = ?
@@ -1080,6 +1085,46 @@ export function workflowRunsForCommit(repo: string, headSha: string): WorkflowRu
     "SELECT * FROM workflow_runs WHERE repo = ? AND head_sha = ? ORDER BY run_id, run_attempt",
   ).all(repo, headSha);
 }
+
+export function workflowRunsForPrBranch(repo: string, number: number, headBranch: string): WorkflowRunRow[] {
+  return db.query<WorkflowRunRow, [string, string, number]>(`
+    SELECT * FROM workflow_runs
+    WHERE repo = ? AND head_branch = ? AND (pr_number IS NULL OR pr_number = ?)
+      AND fetched_at >= datetime('now', '-72 hours')
+    ORDER BY event_at DESC, run_id DESC, run_attempt DESC
+  `).all(repo, headBranch, number);
+}
+
+const claimWorkflowRunForPrTxn = db.transaction((
+  repo: string,
+  runId: number,
+  number: number,
+  headBranch: string,
+): boolean => {
+  const attempts = db.query<{ pr_number: number | null; head_branch: string }, [string, number]>(
+    "SELECT pr_number, head_branch FROM workflow_runs WHERE repo = ? AND run_id = ?",
+  ).all(repo, runId);
+  if (attempts.some((attempt) =>
+    !attempt.head_branch
+    || attempt.head_branch !== headBranch
+    || (attempt.pr_number !== null && attempt.pr_number !== number)
+  )) {
+    return false;
+  }
+  db.prepare("UPDATE workflow_runs SET pr_number = ? WHERE repo = ? AND run_id = ? AND pr_number IS NULL")
+    .run(number, repo, runId);
+  return true;
+});
+
+export function claimWorkflowRunForPr(
+  repo: string,
+  runId: number,
+  number: number,
+  headBranch: string,
+): boolean {
+  return claimWorkflowRunForPrTxn(repo, runId, number, headBranch);
+}
+
 export function listWorkflowRuns(repos: string[], limit = 200, offset = 0): WorkflowRunRow[] {
   if (repos.length === 0) return [];
   const placeholders = repos.map(() => "?").join(", ");
@@ -1089,6 +1134,20 @@ export function listWorkflowRuns(repos: string[], limit = 200, offset = 0): Work
      ORDER BY event_at DESC, run_id DESC, run_attempt DESC
      LIMIT ? OFFSET ?`,
   ).all(...repos, limit, offset);
+}
+
+// Matches both static paths and reusable-workflow paths carrying an `@refs/...` suffix.
+export function listWorkflowRunsForPaths(repos: string[], paths: string[], limit = 200): WorkflowRunRow[] {
+  if (repos.length === 0 || paths.length === 0) return [];
+  const repoPlaceholders = repos.map(() => "?").join(", ");
+  const pathPlaceholders = paths.map(() => "?").join(", ");
+  return db.query<WorkflowRunRow, [...string[], number]>(
+    `SELECT * FROM workflow_runs
+     WHERE repo IN (${repoPlaceholders})
+       AND substr(workflow_path, 1, instr(workflow_path || '@refs/', '@refs/') - 1) IN (${pathPlaceholders})
+     ORDER BY event_at DESC, run_id DESC, run_attempt DESC
+     LIMIT ?`,
+  ).all(...repos, ...paths, limit);
 }
 
 const deleteActionWorkflowsStmt = db.prepare("DELETE FROM action_workflows WHERE repo = ?");
@@ -1125,11 +1184,31 @@ export function listRunJobsForRun(repo: string, runId: number, runAttempt: numbe
   return db.query<RunJobRow, [string, number, number]>(
     `SELECT repo, job_id, run_id, run_attempt, head_sha, head_branch, workflow_name, name,
       status, conclusion, started_at, completed_at, html_url, runner_name, runner_group_name,
-      labels_json, failed_step, log_bytes, log_truncated, log_error, log_format_version, fetched_at
+      labels_json, failed_step, steps_json, log_bytes, log_truncated, log_error, log_format_version, fetched_at
      FROM run_jobs
      WHERE repo = ? AND run_id = ? AND run_attempt = ?
      ORDER BY COALESCE(started_at, completed_at), job_id`,
   ).all(repo, runId, runAttempt);
+}
+
+export function listRunJobsForPrBranch(repo: string, number: number, headBranch: string): RunJobRow[] {
+  return db.query<RunJobRow, [string, string, number]>(`
+    SELECT j.repo, j.job_id, j.run_id, j.run_attempt, j.head_sha, j.head_branch,
+      j.workflow_name, j.name, j.status, j.conclusion, j.started_at, j.completed_at,
+      j.html_url, j.runner_name, j.runner_group_name, j.labels_json, j.failed_step, j.steps_json,
+      j.log_bytes, j.log_truncated, j.log_error, j.log_format_version, j.fetched_at
+    FROM run_jobs j
+    JOIN workflow_runs r
+      ON r.repo = j.repo AND r.run_id = j.run_id AND r.run_attempt = j.run_attempt
+    WHERE r.repo = ? AND r.head_branch = ? AND (r.pr_number IS NULL OR r.pr_number = ?)
+      AND r.fetched_at >= datetime('now', '-72 hours')
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_runs newer
+        WHERE newer.repo = r.repo AND newer.run_id = r.run_id
+          AND newer.run_attempt > r.run_attempt
+      )
+    ORDER BY COALESCE(j.started_at, j.completed_at), j.job_id
+  `).all(repo, headBranch, number);
 }
 
 export interface ActionsLeaseRow {
@@ -1348,6 +1427,7 @@ const evictReposNotInTxn = db.transaction((repos: string[]) => {
   const placeholders = repos.map(() => "?").join(",");
   const whereSql = `repo NOT IN (${placeholders})`;
   preservePrDetails(whereSql, repos);
+  db.prepare(`DELETE FROM pr_rank WHERE ${whereSql}`).run(...repos);
   db.prepare(`DELETE FROM prs WHERE ${whereSql}`).run(...repos);
 });
 
@@ -1368,6 +1448,7 @@ const evictStalePrsTxn = db.transaction((repo: string, keepNumbers: number[]) =>
     ? "repo = ?"
     : `repo = ? AND number NOT IN (${keepNumbers.map(() => "?").join(",")})`;
   preservePrDetails(whereSql, params);
+  db.prepare(`DELETE FROM pr_rank WHERE ${whereSql}`).run(...params);
   db.prepare(`DELETE FROM prs WHERE ${whereSql}`).run(...params);
 });
 
@@ -1384,7 +1465,10 @@ const unsetArchivedStmt = db.prepare("DELETE FROM archived_prs WHERE repo = ? AN
 
 export function setArchived(repo: string, number: number, archived: boolean): void {
   if (archived) {
-    setArchivedStmt.run({ $repo: repo, $number: number, $archived_at: new Date().toISOString() });
+    db.transaction(() => {
+      setArchivedStmt.run({ $repo: repo, $number: number, $archived_at: new Date().toISOString() });
+      unsetRankStmt.run(repo, number);
+    })();
   } else {
     unsetArchivedStmt.run(repo, number);
   }
