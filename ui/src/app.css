@@ -11,8 +11,8 @@
   --border-soft: #f6f6f6;
   --border-hover: #d4d4d4;
   --text: #222323;
-  --text-dim: #686868;
-  --text-faint: #707070;
+  --text-dim: #717171;
+  --text-faint: #8c8c8c;
   /* AppKit semantic colors. The Electron shell replaces these fallbacks with
      NSColor values for the active macOS appearance and accessibility settings. */
   --native-accent: #007aff;
@@ -107,7 +107,7 @@
   --del-gutter: color-mix(in srgb, var(--native-red) 68%, var(--text));
 
   --md-body: #434343;
-  --link: #006bd6;
+  --link: var(--native-accent);
   --link-bg: color-mix(in srgb, var(--native-accent) 10%, var(--bg));
   --link-bg-hover: color-mix(in srgb, var(--native-accent) 17%, var(--bg));
   --code-bg: #f6f6f6;
@@ -174,7 +174,7 @@
   --border-hover: #484848;
   --text: #f2f2f2;
   --text-dim: #aeaeae;
-  --text-faint: #98989d;
+  --text-faint: #8f8f8f;
   --native-accent: #0a84ff;
   --native-blue: #0088ff;
   --native-gray: #98989d;
