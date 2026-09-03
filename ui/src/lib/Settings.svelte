@@ -401,7 +401,7 @@
           <label class="field">
             <span class="label">Theme</span>
             <span class="hint">System follows this Mac automatically</span>
-            <select class="input narrow" bind:value={themeName}>
+            <select class="input narrow" bind:value={themeName} onchange={(event) => setTheme(event.currentTarget.value)}>
               <option value="system">System</option>
               <option value="dark">Dark</option>
               <option value="light">Light</option>
