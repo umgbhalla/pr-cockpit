@@ -948,10 +948,14 @@ async function advanceOnboarding(page, targetStep) {
 }
 
 function parseArgs(argv) {
-  const options = { out: DEFAULT_OUT, filter: "", sizes: DEFAULT_SIZES, themes: ["light", "dark"] };
+  const options = { out: DEFAULT_OUT, filter: "", exact: false, sizes: DEFAULT_SIZES, themes: ["light", "dark"] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") return { help: true };
+    if (arg === "--exact") {
+      options.exact = true;
+      continue;
+    }
     const value = argv[++i];
     if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value`);
     if (arg === "--out") options.out = value;
@@ -980,6 +984,7 @@ function usage() {
 
   --out DIR                 Output directory (default: ${DEFAULT_OUT})
   --filter substring        Shoot scenario names containing substring
+  --exact                   Match the complete scenario name
   --sizes WxH,WxH           Viewports (default: ${DEFAULT_SIZES.join(",")})
   --theme light|dark|both   Color theme (default: both)`);
 }
@@ -1217,7 +1222,7 @@ async function run() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
   await validateStatic();
-  const selected = scenarios.filter((scenario) => scenario.name.includes(options.filter));
+  const selected = scenarios.filter((scenario) => options.exact ? scenario.name === options.filter : scenario.name.includes(options.filter));
   if (!selected.length) throw new Error(`no scenarios match --filter ${JSON.stringify(options.filter)}`);
   await clearManifestScreenshots(options.out);
 

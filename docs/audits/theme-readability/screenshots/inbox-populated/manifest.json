@@ -1,0 +1,14 @@
+{
+  "inbox-populated": {
+    "route": "#/",
+    "description": "Populated inbox with mixed ownership, CI, review, and merge states.",
+    "localAvatarHrefs": [
+      "https://github.com/theolundqvist.png?size=64",
+      "https://github.com/octocat.png?size=64"
+    ],
+    "files": [
+      "1600x1200/light/inbox-populated.png",
+      "1600x1200/dark/inbox-populated.png"
+    ]
+  }
+}

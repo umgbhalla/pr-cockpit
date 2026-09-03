@@ -1,0 +1,11 @@
+{
+  "detail-files": {
+    "route": "#/pr/fixture/cockpit/101/files",
+    "description": "Files tab with an ordinary three-file diff and inline threads.",
+    "localAvatarHrefs": [],
+    "files": [
+      "1600x1200/light/detail-files.png",
+      "1600x1200/dark/detail-files.png"
+    ]
+  }
+}

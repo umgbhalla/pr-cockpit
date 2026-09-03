@@ -1,0 +1,11 @@
+{
+  "settings-agents": {
+    "route": "#/settings/automerge",
+    "description": "Built-in and custom agent configuration.",
+    "localAvatarHrefs": [],
+    "files": [
+      "1600x1200/light/settings-agents.png",
+      "1600x1200/dark/settings-agents.png"
+    ]
+  }
+}
